@@ -16,9 +16,9 @@ enum RangePreset: String, CaseIterable, Identifiable {
     
     var title: String {
         switch self {
-        case .threeMonths: return "3M"
-        case .sixMonths: return "6M"
-        case .year: return "12M"
+        case .threeMonths: return String(localized: "3M", comment: "3 months range")
+        case .sixMonths: return String(localized: "6M", comment: "6 months range")
+        case .year: return String(localized: "12M", comment: "12 months range")
         }
     }
 }

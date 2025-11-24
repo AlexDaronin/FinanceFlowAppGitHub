@@ -8,7 +8,7 @@
 import Foundation
 import SwiftUI
 
-enum PlannedPaymentType {
+enum PlannedPaymentType: Codable {
     case subscription
     case loan
     
@@ -22,7 +22,7 @@ enum PlannedPaymentType {
     }
 }
 
-struct PlannedPayment: Identifiable {
+struct PlannedPayment: Identifiable, Codable {
     let id: UUID
     let title: String
     let amount: Double // Monthly payment amount
@@ -31,6 +31,7 @@ struct PlannedPayment: Identifiable {
     let accountName: String
     let category: String?
     let type: PlannedPaymentType
+    let isIncome: Bool // true for income (salary, etc.), false for expenses (subscriptions)
     
     // Loan-specific properties
     let totalLoanAmount: Double? // Total loan amount (nil for subscriptions)
@@ -47,6 +48,7 @@ struct PlannedPayment: Identifiable {
         accountName: String,
         category: String? = nil,
         type: PlannedPaymentType = .subscription,
+        isIncome: Bool = false,
         totalLoanAmount: Double? = nil,
         remainingBalance: Double? = nil,
         startDate: Date? = nil,
@@ -60,6 +62,7 @@ struct PlannedPayment: Identifiable {
         self.accountName = accountName
         self.category = category
         self.type = type
+        self.isIncome = isIncome
         self.totalLoanAmount = totalLoanAmount
         self.remainingBalance = remainingBalance
         self.startDate = startDate
@@ -119,7 +122,7 @@ struct PlannedPayment: Identifiable {
     ]
 }
 
-enum PlannedPaymentStatus {
+enum PlannedPaymentStatus: Codable {
     case upcoming
     case past
     

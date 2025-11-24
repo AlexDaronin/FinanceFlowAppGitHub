@@ -8,10 +8,13 @@
 import SwiftUI
 import Charts
 import Combine
+import UIKit
 
 struct ContentView: View {
     @StateObject private var settings = AppSettings()
     @StateObject private var debtManager = DebtManager()
+    @State private var sharedTransactions = Transaction.sample
+    @State private var sharedAccounts = Account.sample
     
     private var colorScheme: ColorScheme? {
         switch settings.theme {
@@ -26,34 +29,51 @@ struct ContentView: View {
     
     var body: some View {
         TabView {
-            DashboardView()
+            DashboardView(transactions: $sharedTransactions, accounts: $sharedAccounts)
                 .tabItem {
-                    Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                    Label("", systemImage: "square.grid.2x2")
                 }
             
-            TransactionsView()
+            TransactionsView(transactions: $sharedTransactions, accounts: $sharedAccounts)
                 .tabItem {
-                    Label("Transactions", systemImage: "list.bullet.rectangle")
+                    Label("", systemImage: "list.bullet")
                 }
             
             StatisticsView()
                 .tabItem {
-                    Label("Statistics", systemImage: "chart.line.uptrend.xyaxis")
+                    Label("", systemImage: "chart.bar")
                 }
             
             AIChatView()
                 .tabItem {
-                    Label("AI Chat", systemImage: "message.circle")
+                    Label("", systemImage: "sparkles")
                 }
             
             SettingsView()
                 .tabItem {
-                    Label("Settings", systemImage: "gearshape")
+                    Label("", systemImage: "gearshape")
                 }
         }
         .preferredColorScheme(colorScheme)
         .environmentObject(settings)
         .environmentObject(debtManager)
+        .environment(\.locale, settings.locale)
+        .onAppear {
+            // Hide tab bar labels to make it icon-only
+            let appearance = UITabBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            
+            // Remove title text completely
+            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.clear]
+            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.clear]
+            appearance.stackedLayoutAppearance.normal.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: 100)
+            appearance.stackedLayoutAppearance.selected.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: 100)
+            
+            UITabBar.appearance().standardAppearance = appearance
+            if #available(iOS 15.0, *) {
+                UITabBar.appearance().scrollEdgeAppearance = appearance
+            }
+        }
     }
 }
 
@@ -68,7 +88,7 @@ struct CreditsLoansView: View {
     @State private var showActionMenu = false
     @State private var showTransactionForm = false
     @State private var currentFormMode: TransactionFormMode = .add(.expense)
-    @State private var draftTransaction = TransactionDraft.empty
+    @State private var draftTransaction = TransactionDraft.empty(currency: "USD")
     
     private var totalRemaining: Double {
         credits.map(\.remaining).reduce(0, +)
@@ -196,8 +216,10 @@ struct CreditsLoansView: View {
                     },
                     onCancel: {
                         showTransactionForm = false
-                    }
+                    },
+                    onDelete: nil
                 )
+                .id(currentFormMode) // Force recreation when mode changes
             }
         }
     }
@@ -282,7 +304,7 @@ struct CreditsLoansView: View {
     
     private func startAddingTransaction(for type: TransactionType) {
         currentFormMode = .add(type)
-        draftTransaction = TransactionDraft(type: type)
+        draftTransaction = TransactionDraft(type: type, currency: settings.currency)
         showTransactionForm = true
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showActionMenu = false
@@ -606,50 +628,105 @@ struct DebtFormView: View {
     @State private var showCreateContact = false
     @State private var transactionType: DebtTransactionType = .lent
     @State private var amount: Double = 0
+    @State private var amountText: String = ""
     @State private var date: Date = Date()
     @State private var note: String = ""
-    @State private var showDatePicker = false
     @State private var editingTransaction: DebtTransaction?
     
-    init(contact: Contact? = nil, debtManager: DebtManager, onSave: @escaping (Contact, DebtTransaction) -> Void, onCancel: @escaping () -> Void) {
+    @FocusState private var isAmountFocused: Bool
+    
+    init(contact: Contact? = nil, debtManager: DebtManager, editingTransaction: DebtTransaction? = nil, onSave: @escaping (Contact, DebtTransaction) -> Void, onCancel: @escaping () -> Void) {
         self.contact = contact
         self.debtManager = debtManager
         self.onSave = onSave
         self.onCancel = onCancel
         _selectedContact = State(initialValue: contact)
+        _editingTransaction = State(initialValue: editingTransaction)
         if let contact = contact {
             _contactName = State(initialValue: contact.name)
         }
+        if let transaction = editingTransaction {
+            _amount = State(initialValue: transaction.amount)
+            _date = State(initialValue: transaction.date)
+            _note = State(initialValue: transaction.note ?? "")
+            _transactionType = State(initialValue: transaction.type)
+            if let contact = debtManager.getContact(id: transaction.contactId) {
+                _selectedContact = State(initialValue: contact)
+                _contactName = State(initialValue: contact.name)
+            }
+        }
+    }
+    
+    // MARK: - Theme Color
+    private var themeColor: Color {
+        transactionType == .lent ? .green : .red
+    }
+    
+    // MARK: - Sign Symbol
+    private var signSymbol: String {
+        transactionType == .lent ? "+" : "-"
     }
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 0) {
-                    // Transaction type selector
-                    transactionTypeSelector
-                        .padding(.horizontal, 20)
-                        .padding(.top, 20)
-                        .padding(.bottom, 24)
-                    
-                    VStack(spacing: 16) {
-                        // Contact selection/creation
-                        contactSection
+            ZStack {
+                Color.customBackground.ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Custom Segmented Control at Top
+                        typeSegmentedControl
+                            .padding(.horizontal)
+                            .padding(.top, 8)
                         
-                        // Amount field
-                        amountField
+                        // Hero Amount Input (Center)
+                        heroAmountField
+                            .padding(.horizontal)
                         
-                        // Date section
-                        dateSection
+                        // Input Fields
+                        VStack(spacing: 16) {
+                            // Contact Row
+                            DebtContactRow(
+                                contact: selectedContact,
+                                onTap: { showContactPicker = true }
+                            )
+                            
+                            // Date Field
+                            TransactionDateRow(
+                                icon: "calendar",
+                                title: "Date",
+                                date: $date
+                            )
+                            
+                            // Note Field
+                            TransactionFormRow(
+                                icon: "text.alignleft",
+                                title: "Note",
+                                value: $note,
+                                placeholder: "Add a note (optional)"
+                            )
+                        }
+                        .padding(.horizontal)
                         
-                        // Note field
-                        noteField
+                        // Save Button
+                        Button {
+                            handleSave()
+                        } label: {
+                            Text("Save")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(isValid ? themeColor : Color.gray.opacity(0.3))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .disabled(!isValid)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 40)
                 }
             }
-            .background(Color.customBackground)
             .navigationTitle(editingTransaction == nil ? "Add Debt" : "Edit Debt")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -658,12 +735,6 @@ struct DebtFormView: View {
                         onCancel()
                         dismiss()
                     }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        handleSave()
-                    }
-                    .disabled(!isValid)
                 }
             }
             .sheet(isPresented: $showContactPicker) {
@@ -695,39 +766,41 @@ struct DebtFormView: View {
                     }
                 )
             }
-            .sheet(isPresented: $showDatePicker) {
-                compactDatePicker
+            .onAppear {
+                // Initialize amount text from amount
+                if amount == 0 {
+                    amountText = ""
+                } else {
+                    amountText = formatAmount(amount)
+                }
+                // Auto-focus amount field
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isAmountFocused = true
+                }
+            }
+            .onChange(of: amount) { oldValue, newValue in
+                // Sync amountText when amount changes externally
+                if newValue == 0 {
+                    amountText = ""
+                } else if amountText.isEmpty || abs(newValue - (Double(amountText) ?? 0)) > 0.01 {
+                    amountText = formatAmount(newValue)
+                }
             }
         }
         .presentationDetents([.large])
-        .onAppear {
-            if let contact = contact {
-                selectedContact = contact
-                contactName = contact.name
-            }
-            if let transaction = editingTransaction {
-                amount = transaction.amount
-                date = transaction.date
-                note = transaction.note ?? ""
-                transactionType = transaction.type
-            }
-        }
     }
     
     private var isValid: Bool {
-        (!contactName.trimmingCharacters(in: .whitespaces).isEmpty || selectedContact != nil) && amount > 0
+        (selectedContact != nil || !contactName.trimmingCharacters(in: .whitespaces).isEmpty) && amount > 0
     }
     
     private func handleSave() {
         let finalContact: Contact
         if let existing = selectedContact, debtManager.contacts.contains(where: { $0.id == existing.id }) {
-            // Use existing contact from database
             finalContact = existing
         } else if let existing = selectedContact {
-            // New contact that was just created in picker
             finalContact = existing
         } else {
-            // Create new contact
             finalContact = Contact(name: contactName.trimmingCharacters(in: .whitespaces), avatarColor: Contact.generateColor(for: contactName))
         }
         
@@ -745,603 +818,163 @@ struct DebtFormView: View {
         dismiss()
     }
     
-    private var transactionTypeSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Type")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Picker("Transaction Type", selection: $transactionType) {
-                ForEach(DebtTransactionType.allCases) { type in
-                    Text(type.title).tag(type)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
-    }
-    
-    private var contactSection: some View {
-        Button {
-            showContactPicker = true
-        } label: {
-            HStack(spacing: 12) {
-                if let contact = selectedContact {
-                    ZStack {
-                        Circle()
-                            .fill(contact.color.opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        Text(contact.initials)
-                            .font(.headline)
-                            .foregroundStyle(contact.color)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Contact")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(contact.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                    }
-                } else {
-                    ZStack {
-                        Circle()
-                            .fill(Color.secondary.opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: "person.fill")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Contact")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("Select or create contact")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(16)
-            .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private var amountField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Amount")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Text(transactionType == .lent ? "+" : "-")
-                    .font(.system(size: 36, weight: .light))
-                    .foregroundStyle(transactionType.direction.color.opacity(0.6))
-                TextField("0.00", value: $amount, format: .number)
-                    .font(.system(size: 36, weight: .light))
-                    .keyboardType(.decimalPad)
-                    .foregroundStyle(.primary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
-            .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-    }
-    
-    private var dateSection: some View {
-        Button {
-            showDatePicker = true
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.15))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "calendar")
-                        .font(.headline)
-                        .foregroundStyle(.blue)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Date")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(formatDate(date))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(16)
-            .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private var noteField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Note (Optional)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Add a note", text: $note, axis: .vertical)
-                .font(.subheadline)
-                .lineLimit(3...6)
-                .padding(16)
-                .background(Color.customCardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        }
-    }
-    
-    private var compactDatePicker: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Quick date buttons
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        quickDateButton(title: "Today", date: Date())
-                        quickDateButton(title: "Yesterday", date: Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date())
-                        quickDateButton(title: "Tomorrow", date: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date())
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                }
-                
-                Divider()
-                
-                DatePicker("", selection: $date, displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .padding()
-            }
-            .background(Color.customBackground)
-            .navigationTitle("Select Date")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        showDatePicker = false
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-    
-    private func quickDateButton(title: String, date: Date) -> some View {
-        Button {
-            self.date = date
-            showDatePicker = false
-        } label: {
-            VStack(spacing: 4) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                Text(formatDate(date))
-                    .font(.caption2)
-            }
-            .foregroundStyle(self.date.isSameDay(as: date) ? .white : .primary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(self.date.isSameDay(as: date) ? Color.accentColor : Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        if Calendar.current.isDateInToday(date) {
-            return "Today"
-        } else if Calendar.current.isDateInYesterday(date) {
-            return "Yesterday"
-        } else if Calendar.current.isDateInTomorrow(date) {
-            return "Tomorrow"
-        } else {
-            formatter.dateFormat = "MMM d, yyyy"
-            return formatter.string(from: date)
-        }
-    }
-}
-
-struct CreditCard: View {
-    @EnvironmentObject var settings: AppSettings
-    let credit: Credit
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Title and Duration
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(credit.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text("\(credit.monthsLeft) months left")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(currencyString(credit.remaining, code: settings.currency))
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text("Remaining")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            
-            // Progress Bar
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Progress")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.1f%%", credit.progress))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
-                }
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.customSecondaryBackground)
-                            .frame(height: 8)
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.customCardBackground)
-                            .frame(width: geometry.size.width * (credit.progress / 100), height: 8)
-                    }
-                }
-                .frame(height: 8)
-            }
-            
-            // Financial Details
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Total Amount")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(currencyString(credit.totalAmount, code: settings.currency))
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-                .background(Color.customSecondaryBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Paid")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(currencyString(credit.paid, code: settings.currency))
-                        .font(.headline)
-                        .foregroundStyle(.green)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-                .background(Color.customSecondaryBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            
-            // Due Date & Payment
-            HStack {
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text("Due Date: \(formatDateForCredit(credit.dueDate))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text("\(currencyString(credit.monthlyPayment, code: settings.currency)) /month")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-            }
-            
-            // Edit Button
-            Button {
-                // Edit action
-            } label: {
-                HStack {
-                    Image(systemName: "pencil")
-                        .font(.caption)
-                    Text("Edit")
-                        .font(.caption)
-                }
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(Color.customSecondaryBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-        }
-        .padding(16)
-        .background(Color.customCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .shadow(color: Color.primary.opacity(0.06), radius: 12, x: 0, y: 4)
-    }
-}
-
-struct SubscriptionsView: View {
-    @EnvironmentObject var settings: AppSettings
-    @State private var subscriptions = PlannedPayment.sample.filter { $0.type == .subscription && $0.status == .upcoming }
-    @State private var showAddSubscriptionSheet = false
-    @State private var showEditSubscriptionSheet = false
-    @State private var selectedSubscription: PlannedPayment?
-    
-    private var totalMonthly: Double {
-        subscriptions.map(\.amount).reduce(0, +)
-    }
-    
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.customBackground.ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        // Header
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Subscriptions")
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text("Manage your recurring payments")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal)
-                        .padding(.top)
-                        
-                        // Summary Card - Monthly Burn Rate
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Monthly Burn Rate")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(currencyString(totalMonthly, code: settings.currency))
-                                .font(.title2.weight(.bold))
-                                .foregroundStyle(.primary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                        .background(Color.customCardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                        )
-                        .padding(.horizontal)
-                        
-                        // Subscriptions List
-                        VStack(spacing: 12) {
-                            if subscriptions.isEmpty {
-                                emptyStateView
-                                    .padding(.horizontal)
-                                    .padding(.top, 20)
-                            } else {
-                                ForEach(subscriptions) { subscription in
-                                    SubscriptionCard(
-                                        subscription: subscription,
-                                        onTap: {
-                                            selectedSubscription = subscription
-                                            showEditSubscriptionSheet = true
-                                        },
-                                        onDelete: {
-                                            if let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) {
-                                                subscriptions.remove(at: index)
-                                            }
-                                        }
-                                    )
-                                    .padding(.horizontal)
-                                }
-                            }
-                        }
-                        .padding(.top, 8)
-                    }
-                    .padding(.bottom, 120)
-                }
-                
-                // Floating Action Button
-                floatingActionButton
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showAddSubscriptionSheet) {
-                AddPaymentFormView(
-                    paymentType: .subscription,
-                    onSave: { payment in
-                        subscriptions.append(payment)
-                        showAddSubscriptionSheet = false
-                    },
-                    onCancel: {
-                        showAddSubscriptionSheet = false
-                    }
-                )
-                .environmentObject(settings)
-            }
-            .sheet(isPresented: $showEditSubscriptionSheet) {
-                if let subscription = selectedSubscription {
-                    AddPaymentFormView(
-                        paymentType: .subscription,
-                        existingPayment: subscription,
-                        onSave: { updatedPayment in
-                            if let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) {
-                                subscriptions[index] = updatedPayment
-                            }
-                            showEditSubscriptionSheet = false
-                            selectedSubscription = nil
-                        },
-                        onCancel: {
-                            showEditSubscriptionSheet = false
-                            selectedSubscription = nil
-                        }
-                    )
-                    .environmentObject(settings)
-                }
-            }
-        }
-    }
-    
-    private var emptyStateView: some View {
-        VStack(spacing: 8) {
-            Text("No subscriptions")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 20)
-    }
-    
-    private var floatingActionButton: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
+    // MARK: - Type Segmented Control
+    private var typeSegmentedControl: some View {
+        HStack(spacing: 0) {
+            ForEach([DebtTransactionType.lent, DebtTransactionType.borrowed]) { type in
                 Button {
-                    showAddSubscriptionSheet = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        transactionType = type
+                    }
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 60, height: 60)
-                        .background(Color.accentColor)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
+                    Text(type.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(transactionType == type ? .white : .primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(transactionType == type ? type.direction.color : Color.clear)
+                        )
                 }
-                .padding(.trailing, 24)
-                .padding(.bottom, 100)
+                .buttonStyle(.plain)
             }
+        }
+        .padding(4)
+        .background(Color.customCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+    
+    // MARK: - Hero Amount Field
+    private var heroAmountField: some View {
+        VStack(spacing: 8) {
+            Text("Amount")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Spacer()
+                
+                // Icon/Sign for transaction type
+                Text(signSymbol)
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(themeColor)
+                
+                TextField("0", text: $amountText)
+                    .font(.system(size: 64, weight: .heavy, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($isAmountFocused)
+                    .foregroundStyle(.primary)
+                    .frame(minWidth: 120)
+                    .onChange(of: amountText) { oldValue, newValue in
+                        handleAmountInput(newValue)
+                    }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+        }
+    }
+    
+    // MARK: - Amount Input Handler
+    private func handleAmountInput(_ newValue: String) {
+        // Remove any non-numeric characters except decimal point
+        let cleaned = newValue.filter { $0.isNumber || $0 == "." }
+        
+        // Handle leading zero replacement
+        if amount == 0 && !cleaned.isEmpty {
+            if let firstChar = cleaned.first, firstChar.isNumber, firstChar != "0" {
+                amountText = cleaned
+                if let value = Double(cleaned) {
+                    amount = value
+                }
+                return
+            }
+        }
+        
+        // Update the text
+        amountText = cleaned
+        
+        // Convert to double and update amount
+        if cleaned.isEmpty {
+            amount = 0
+        } else if let value = Double(cleaned) {
+            amount = value
+        }
+    }
+    
+    // MARK: - Format Amount
+    private func formatAmount(_ amount: Double) -> String {
+        // Format without trailing zeros
+        if amount.truncatingRemainder(dividingBy: 1) == 0 {
+            return String(format: "%.0f", amount)
+        } else {
+            let formatted = String(format: "%.2f", amount)
+            // Remove trailing zeros
+            return formatted.trimmingCharacters(in: CharacterSet(charactersIn: "0")).trimmingCharacters(in: CharacterSet(charactersIn: "."))
         }
     }
 }
 
-struct SubscriptionCard: View {
-    @EnvironmentObject var settings: AppSettings
-    let subscription: PlannedPayment
+// MARK: - Debt Contact Row Component
+struct DebtContactRow: View {
+    let contact: Contact?
     let onTap: () -> Void
-    let onDelete: (() -> Void)?
-    
-    init(subscription: PlannedPayment, onTap: @escaping () -> Void, onDelete: (() -> Void)? = nil) {
-        self.subscription = subscription
-        self.onTap = onTap
-        self.onDelete = onDelete
-    }
-    
-    private var serviceIcon: String {
-        // Use category-based icons or default
-        if let category = subscription.category {
-            switch category.lowercased() {
-            case "entertainment":
-                return "tv.fill"
-            case "utilities":
-                return "bolt.fill"
-            case "housing":
-                return "house.fill"
-            default:
-                return "arrow.triangle.2.circlepath"
-            }
-        }
-        return "arrow.triangle.2.circlepath"
-    }
-    
-    private var iconColor: Color {
-        if let category = subscription.category {
-            switch category.lowercased() {
-            case "entertainment":
-                return .purple
-            case "utilities":
-                return .yellow
-            case "housing":
-                return .blue
-            default:
-                return .accentColor
-            }
-        }
-        return .accentColor
-    }
     
     var body: some View {
         Button {
             onTap()
         } label: {
             HStack(spacing: 16) {
-                // Service Icon (Left)
-                ZStack {
-                    Circle()
-                        .fill(iconColor.opacity(0.2))
-                        .frame(width: 48, height: 48)
-                    Image(systemName: serviceIcon)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(iconColor)
-                }
-                
-                // Name and Date (Center)
-                HStack(spacing: 8) {
-                    Text(subscription.title)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                if let contact = contact {
+                    ZStack {
+                        Circle()
+                            .fill(contact.color.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                        Text(contact.initials)
+                            .font(.subheadline)
+                            .foregroundStyle(contact.color)
+                    }
+                    .frame(width: 24)
                     
-                    Text(shortDate(subscription.date))
-                        .font(.caption)
-                        .foregroundStyle(.secondary.opacity(0.7))
-                }
-                
-                Spacer()
-                
-                // Amount (Right)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(currencyString(subscription.amount, code: settings.currency))
-                        .font(.title3.weight(.bold))
+                    Text("Contact")
+                        .font(.body)
                         .foregroundStyle(.primary)
                     
-                    Text("/mo")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary.opacity(0.7))
+                    Spacer()
+                    
+                    Text(contact.name)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.headline)
+                        .foregroundStyle(.blue)
+                        .frame(width: 24)
+                    
+                    Text("Contact")
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text("Select or create contact")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
                 }
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .padding(18)
+            .padding(16)
             .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
-            .shadow(color: Color.primary.opacity(0.04), radius: 8, x: 0, y: 2)
         }
         .buttonStyle(.plain)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if let onDelete = onDelete {
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            }
-        }
     }
 }
 
@@ -1590,71 +1223,93 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("General") {
-                    Picker("Currency", selection: $settings.currency) {
-                        ForEach(["USD", "EUR", "PLN", "GBP"], id: \.self) { code in
-                            Text(code).tag(code)
+                // General settings - most commonly used, ordered by importance
+                Section(String(localized: "General", comment: "General settings section")) {
+                    // Language first for accessibility
+                    Picker(String(localized: "Language", comment: "Language picker"), selection: $settings.appLanguage) {
+                        ForEach(AppLanguage.allCases) { language in
+                            Text(language.displayName).tag(language)
                         }
                     }
-                    Picker("Theme", selection: $settings.theme) {
+                    
+                    // Theme for visual preferences
+                    Picker(String(localized: "Theme", comment: "Theme picker"), selection: $settings.theme) {
                         ForEach(ThemeOption.allCases) { option in
                             Text(option.title).tag(option)
                         }
                     }
-                    Stepper(value: $settings.startDay, in: 1...28) {
-                        Text("Start day of month: \(settings.startDay)")
+                    
+                    // Currency for financial display
+                    Picker(String(localized: "Currency", comment: "Currency picker"), selection: $settings.currency) {
+                        ForEach(["USD", "EUR", "GBP", "JPY", "CNY", "AUD", "CAD", "CHF", "INR", "PLN", "RUB", "BRL", "MXN", "KRW", "SGD", "HKD", "NZD", "SEK", "NOK", "DKK"], id: \.self) { code in
+                            Text(code).tag(code)
+                        }
                     }
-                    Picker("Language", selection: $settings.language) {
-                        ForEach(["English", "Polski", "Deutsch"], id: \.self) { lang in
-                            Text(lang).tag(lang)
+                    
+                    // Start day for monthly calculations
+                    NavigationLink {
+                        StartDaySelectionView(selectedDay: $settings.startDay)
+                    } label: {
+                        HStack {
+                            Text("Start day of month", comment: "Start day of month label")
+                            Spacer()
+                            Text("\(settings.startDay)\(daySuffix(settings.startDay))")
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
                 
-                Section("Accounts & Categories") {
-                    Toggle("Include cash in totals", isOn: $settings.includeCashInTotals)
-                    NavigationLink("Manage categories") {
+                // Accounts & Categories - data management
+                Section(String(localized: "Accounts & Categories", comment: "Accounts & Categories section")) {
+                    NavigationLink(String(localized: "Manage accounts", comment: "Manage accounts link")) {
+                        Text("Accounts editor coming soon.", comment: "Accounts editor coming soon message")
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    NavigationLink(String(localized: "Manage categories", comment: "Manage categories link")) {
                         CategoryManagementView()
                             .environmentObject(settings)
                     }
-                    NavigationLink("Manage accounts") {
-                        Text("Accounts editor coming soon.")
-                            .foregroundStyle(.secondary)
-                    }
+                    
+                    Toggle(String(localized: "Include cash in totals", comment: "Include cash toggle"), isOn: $settings.includeCashInTotals)
                 }
                 
-                Section("Notifications") {
-                    Toggle("Payment reminders", isOn: $settings.notificationsEnabled)
-                    Toggle("Subscription alerts", isOn: $settings.subscriptionAlerts)
+                // Notifications - all notification preferences together
+                Section(String(localized: "Notifications", comment: "Notifications section")) {
+                    Toggle(String(localized: "Payment reminders", comment: "Payment reminders toggle"), isOn: $settings.notificationsEnabled)
+                    Toggle(String(localized: "Subscription alerts", comment: "Subscription alerts toggle"), isOn: $settings.subscriptionAlerts)
                 }
                 
-                Section("Data & Backup") {
-                    Button("Export local backup") {
-                        // TODO: integrate backup flow
-                    }
-                    Button("Restore from backup") {
-                        // TODO: integrate restore flow
-                    }
-                }
-                
-                Section("Premium") {
+                // Premium - subscription management
+                Section(String(localized: "Premium", comment: "Premium section")) {
                     Button(role: settings.premiumEnabled ? .destructive : .none) {
                         settings.premiumEnabled.toggle()
                     } label: {
-                        Text(settings.premiumEnabled ? "Cancel subscription" : "Start premium trial")
+                        Text(settings.premiumEnabled ? String(localized: "Cancel subscription", comment: "Cancel subscription button") : String(localized: "Start premium trial", comment: "Start premium trial button"))
                             .foregroundStyle(settings.premiumEnabled ? .red : .accentColor)
+                    }
+                }
+                
+                // Data & Backup - advanced features at the end
+                Section(String(localized: "Data & Backup", comment: "Data & Backup section")) {
+                    Button(String(localized: "Export local backup", comment: "Export backup button")) {
+                        // TODO: integrate backup flow
+                    }
+                    Button(String(localized: "Restore from backup", comment: "Restore backup button")) {
+                        // TODO: integrate restore flow
                     }
                 }
             }
             .background(Color.customBackground)
             .scrollContentBackground(.hidden)
-            .navigationTitle("Settings")
+            .navigationTitle(Text("Settings", comment: "Settings view title"))
         }
     }
 }
 struct TransactionsView: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var transactions = Transaction.sample
+    @Binding var transactions: [Transaction]
+    @Binding var accounts: [Account]
     @State private var plannedPayments = PlannedPayment.sample
     @State private var searchText = ""
     @State private var selectedCategory: String?
@@ -1662,7 +1317,7 @@ struct TransactionsView: View {
     @State private var showActionMenu = false
     @State private var showTransactionForm = false
     @State private var currentFormMode: TransactionFormMode = .add(.expense)
-    @State private var draftTransaction = TransactionDraft.empty
+    @State private var draftTransaction = TransactionDraft.empty(currency: "USD")
     @State private var scrollOffset: CGFloat = 0
     @State private var showPlannedPayments = false
     @State private var selectedTab: TransactionTab = .past
@@ -1780,7 +1435,7 @@ struct TransactionsView: View {
                                                     .padding(.top, index == 0 ? 8 : 16)
                                                     .padding(.bottom, 8)
                                                 
-                                                // Transactions for this day
+                                                // Transactions for this day - using ForEach with swipe actions
                                                 ForEach(dayGroup.transactions) { transaction in
                                                     Button {
                                                         startEditing(transaction)
@@ -1788,6 +1443,13 @@ struct TransactionsView: View {
                                                         TransactionRow(transaction: transaction)
                                                     }
                                                     .buttonStyle(.plain)
+                                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                                        Button(role: .destructive) {
+                                                            deleteTransaction(transaction)
+                                                        } label: {
+                                                            Label("Delete", systemImage: "trash")
+                                                        }
+                                                    }
                                                     .id(transaction.id)
                                                     .padding(.bottom, 8)
                                                 }
@@ -1881,12 +1543,12 @@ struct TransactionsView: View {
                     }
                 }
                 .background(Color.customBackground)
-                .navigationTitle("Transactions")
-                .searchable(text: $searchText, prompt: "Search transactions")
+                .navigationTitle(Text("Transactions", comment: "Transactions view title"))
+                .searchable(text: $searchText, prompt: Text("Search transactions", comment: "Search transactions placeholder"))
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         if selectedCategory != nil {
-                            Button("Reset") {
+                            Button(String(localized: "Reset", comment: "Reset filter button")) {
                                 withAnimation(.easeInOut) {
                                     selectedCategory = nil
                                 }
@@ -1912,8 +1574,15 @@ struct TransactionsView: View {
                     },
                     onCancel: {
                         showTransactionForm = false
+                    },
+                    onDelete: { id in
+                        if let transaction = transactions.first(where: { $0.id == id }) {
+                            deleteTransaction(transaction)
+                        }
+                        showTransactionForm = false
                     }
                 )
+                .id(currentFormMode) // Force recreation when mode changes
             }
         }
     }
@@ -1929,7 +1598,7 @@ struct TransactionsView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "house.fill")
                         .font(.caption)
-                    Text("Today")
+                    Text("Today", comment: "Today tab")
                         .font(.subheadline.weight(.semibold))
                 }
                 .foregroundStyle(selectedTab == .past ? .white : .secondary)
@@ -1952,7 +1621,7 @@ struct TransactionsView: View {
                     selectedTab = .missed
                 }
             } label: {
-                Text("Missed")
+                Text("Missed", comment: "Missed tab")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(selectedTab == .missed ? .white : .secondary)
                     .padding(.horizontal, 16)
@@ -1974,7 +1643,7 @@ struct TransactionsView: View {
                     selectedTab = .planned
                 }
             } label: {
-                Text("Future")
+                Text("Future", comment: "Future tab")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(selectedTab == .planned ? .white : .secondary)
                     .padding(.horizontal, 16)
@@ -1998,7 +1667,7 @@ struct TransactionsView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Section Header
             HStack {
-                Text("Upcoming Payments")
+                Text("Upcoming Payments", comment: "Upcoming payments header")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.primary)
                 Spacer()
@@ -2031,7 +1700,7 @@ struct TransactionsView: View {
     
     private var categoryMenu: some View {
         Menu {
-            Button("All Categories") {
+            Button(String(localized: "All Categories", comment: "All categories filter")) {
                 selectedCategory = nil
             }
             Divider()
@@ -2041,13 +1710,13 @@ struct TransactionsView: View {
                 }
             }
         } label: {
-            Label(selectedCategory ?? "Categories", systemImage: "line.3.horizontal.decrease.circle")
+            Label(selectedCategory ?? String(localized: "Categories", comment: "Categories menu label"), systemImage: "line.3.horizontal.decrease.circle")
         }
     }
     
     private var typeMenu: some View {
         Menu {
-            Button("All Types") {
+            Button(String(localized: "All Types", comment: "All types filter")) {
                 selectedType = nil
             }
             Divider()
@@ -2057,7 +1726,7 @@ struct TransactionsView: View {
                 }
             }
         } label: {
-            Label(selectedType?.title ?? "Types", systemImage: "slider.horizontal.3")
+            Label(selectedType?.title ?? String(localized: "Types", comment: "Types menu label"), systemImage: "slider.horizontal.3")
         }
     }
     
@@ -2069,7 +1738,7 @@ struct TransactionsView: View {
             }
         } label: {
             HStack {
-                Text("Category: \(selectedCategory ?? "")")
+                Text("\(String(localized: "Category:", comment: "Category filter prefix")) \(selectedCategory ?? "")")
                 Spacer()
                 Image(systemName: "xmark.circle.fill")
             }
@@ -2163,9 +1832,9 @@ struct TransactionsView: View {
     
     private var emptyTransactionsState: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("No results")
+            Text("No results", comment: "No results empty state")
                 .font(.headline)
-            Text("Try changing your search or filters.")
+            Text("Try changing your search or filters.", comment: "No results suggestion")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -2177,10 +1846,10 @@ struct TransactionsView: View {
             Image(systemName: "calendar")
                 .font(.system(size: 48))
                 .foregroundStyle(.blue.opacity(0.6))
-            Text("No upcoming payments")
+            Text("No upcoming payments", comment: "No upcoming payments empty state")
                 .font(.headline)
                 .foregroundStyle(.primary)
-            Text("You don't have any planned payments scheduled.")
+            Text("You don't have any planned payments scheduled.", comment: "No planned payments message")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -2194,10 +1863,10 @@ struct TransactionsView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
                 .foregroundStyle(.orange.opacity(0.6))
-            Text("No missed payments")
+            Text("No missed payments", comment: "No missed payments empty state")
                 .font(.headline)
                 .foregroundStyle(.primary)
-            Text("All your payments are up to date.")
+            Text("All your payments are up to date.", comment: "All payments up to date message")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -2214,11 +1883,11 @@ struct TransactionsView: View {
         
         let dateString: String
         if isToday {
-            dateString = "Today"
+            dateString = String(localized: "Today", comment: "Today date header")
         } else if isYesterday {
-            dateString = "Yesterday"
+            dateString = String(localized: "Yesterday", comment: "Yesterday date header")
         } else if isTomorrow {
-            dateString = "Tomorrow"
+            dateString = String(localized: "Tomorrow", comment: "Tomorrow date header")
         } else {
             let formatter = DateFormatter()
             formatter.dateFormat = "EEEE, MMM d"
@@ -2235,7 +1904,7 @@ struct TransactionsView: View {
     
     private func startAddingTransaction(for type: TransactionType) {
         currentFormMode = .add(type)
-        draftTransaction = TransactionDraft(type: type)
+        draftTransaction = TransactionDraft(type: type, currency: settings.currency)
         showTransactionForm = true
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showActionMenu = false
@@ -2243,23 +1912,101 @@ struct TransactionsView: View {
     }
     
     private func startEditing(_ transaction: Transaction) {
-        currentFormMode = .edit(transaction.id)
-        draftTransaction = TransactionDraft(transaction: transaction)
-        showTransactionForm = true
+        // Reset sheet state first to ensure clean state
+        if showTransactionForm {
+            showTransactionForm = false
+            // Wait for sheet to close before opening with new mode
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.currentFormMode = .edit(transaction.id)
+                self.draftTransaction = TransactionDraft(transaction: transaction)
+                self.showTransactionForm = true
+            }
+        } else {
+            // Set the new mode and draft
+            currentFormMode = .edit(transaction.id)
+            draftTransaction = TransactionDraft(transaction: transaction)
+            showTransactionForm = true
+        }
     }
     
     private func handleSave(_ draft: TransactionDraft) {
+        let oldTransaction: Transaction?
+        
         switch currentFormMode {
         case .add:
             let newTransaction = draft.toTransaction(existingId: nil)
             transactions.insert(newTransaction, at: 0)
+            oldTransaction = nil
         case .edit(let id):
+            oldTransaction = transactions.first(where: { $0.id == id })
             let updated = draft.toTransaction(existingId: id)
             if let index = transactions.firstIndex(where: { $0.id == id }) {
                 transactions[index] = updated
             }
         }
+        
+        // Update account balances using draft (which has toAccountName for transfers)
+        updateAccountBalances(oldTransaction: oldTransaction, newDraft: draft)
+        
         showTransactionForm = false
+    }
+    
+    private func deleteTransaction(_ transaction: Transaction) {
+        transactions.removeAll { $0.id == transaction.id }
+        // Revert account balance changes for deleted transaction
+        updateAccountBalances(oldTransaction: transaction, newDraft: nil)
+    }
+    
+    private func updateAccountBalances(oldTransaction: Transaction?, newDraft: TransactionDraft?) {
+        // Helper function to calculate balance change for a transaction
+        func balanceChange(for transaction: Transaction) -> Double {
+            switch transaction.type {
+            case .income:
+                return transaction.amount
+            case .expense:
+                return -transaction.amount
+            case .transfer:
+                // Transfers don't change total balance, but move money between accounts
+                return 0
+            case .debt:
+                // Debt transactions don't affect account balance
+                return 0
+            }
+        }
+        
+        // Revert old transaction's effect
+        if let old = oldTransaction {
+            if let accountIndex = accounts.firstIndex(where: { $0.name == old.accountName }) {
+                accounts[accountIndex].balance -= balanceChange(for: old)
+            }
+            
+            // Handle transfers - revert from both accounts
+            if old.type == .transfer, let toAccountName = old.toAccountName,
+               let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
+                accounts[toAccountIndex].balance += old.amount // Add back to 'to' account
+            }
+        }
+        
+        // Apply new transaction's effect using draft (which has toAccountName)
+        if let draft = newDraft {
+            let balanceChange = draft.type == .income ? draft.amount : (draft.type == .expense ? -draft.amount : 0)
+            
+            if draft.type == .transfer, let toAccountName = draft.toAccountName {
+                // Transfer: subtract from fromAccount, add to toAccount
+                if let fromAccountIndex = accounts.firstIndex(where: { $0.name == draft.accountName }) {
+                    accounts[fromAccountIndex].balance -= draft.amount
+                }
+                if let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
+                    accounts[toAccountIndex].balance += draft.amount
+                }
+            } else if draft.type != .debt {
+                // Income or Expense: update the account balance
+                if let accountIndex = accounts.firstIndex(where: { $0.name == draft.accountName }) {
+                    accounts[accountIndex].balance += balanceChange
+                }
+            }
+            // Debt transactions don't affect account balance
+        }
     }
 }
 
@@ -2274,15 +2021,22 @@ struct TransactionRow: View {
         return transaction.type.iconName
     }
     
+    private var categoryColor: Color {
+        if let category = settings.categories.first(where: { $0.name == transaction.category }) {
+            return category.color
+        }
+        return transaction.type.color
+    }
+    
     var body: some View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(transaction.type.color.opacity(0.15))
+                    .fill(categoryColor.opacity(0.15))
                     .frame(width: 44, height: 44)
                 Image(systemName: categoryIcon)
                     .font(.headline)
-                    .foregroundStyle(transaction.type.color)
+                    .foregroundStyle(categoryColor)
             }
             
             VStack(alignment: .leading, spacing: 4) {
@@ -2298,7 +2052,7 @@ struct TransactionRow: View {
             
             Spacer()
             
-            Text(transaction.displayAmount(currencyCode: settings.currency))
+            Text(transaction.displayAmount())
                 .font(.headline)
                 .foregroundStyle(transaction.type.color)
         }
@@ -2326,7 +2080,11 @@ struct PlannedPaymentRow: View {
     }
     
     private var iconColor: Color {
-        payment.status == .past || payment.date < Date() ? .orange : .blue
+        if let categoryName = payment.category,
+           let category = settings.categories.first(where: { $0.name == categoryName }) {
+            return category.color
+        }
+        return payment.status == .past || payment.date < Date() ? .orange : .blue
     }
     
     var body: some View {
@@ -2387,23 +2145,69 @@ struct TransactionFormView: View {
     let accounts: [Account]
     let onSave: (TransactionDraft) -> Void
     let onCancel: () -> Void
+    let onDelete: ((UUID) -> Void)?
     
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var debtManager: DebtManager
     @State private var showCategoryPicker = false
     @State private var showAccountPicker = false
     @State private var showToAccountPicker = false
-    @State private var showDatePicker = false
+    @State private var showContactPicker = false
+    @State private var selectedContact: Contact?
+    @State private var debtTransactionType: DebtTransactionType = .lent
+    @State private var amountText: String = ""
+    @State private var repeatOption: RepeatOption = .never
+    @State private var saveToPlannedPayments: Bool = false
+    @State private var showDeleteAlert = false
     
-    private var availableCategories: [Category] {
-        if categories.isEmpty {
-            return settings.categories
+    @FocusState private var isAmountFocused: Bool
+    
+    // Computed property to check if we're in edit mode
+    private var isEditMode: Bool {
+        if case .edit = mode {
+            return true
         }
-        return settings.categories.filter { categories.contains($0.name) }
+        return false
     }
     
-    private var selectedCategory: Category? {
-        settings.categories.first { $0.name == draft.category }
+    enum RepeatOption: String, CaseIterable {
+        case never = "Never"
+        case monthly = "Every Month"
+        case yearly = "Every Year"
+        
+        var localizedTitle: String {
+            switch self {
+            case .never:
+                return String(localized: "Never", comment: "Never repeat option")
+            case .monthly:
+                return String(localized: "Every Month", comment: "Every month repeat option")
+            case .yearly:
+                return String(localized: "Every Year", comment: "Every year repeat option")
+            }
+        }
+    }
+    
+    private var availableCategories: [Category] {
+        var filtered = settings.categories
+        
+        // Filter by category type based on transaction type
+        switch draft.type {
+        case .income:
+            filtered = filtered.filter { $0.type == .income }
+        case .expense:
+            filtered = filtered.filter { $0.type == .expense }
+        case .transfer, .debt:
+            // For transfers and debt, show all categories or none
+            break
+        }
+        
+        // Additional filtering if specific categories are provided
+        if !categories.isEmpty {
+            filtered = filtered.filter { categories.contains($0.name) }
+        }
+        
+        return filtered
     }
     
     private var selectedAccount: Account? {
@@ -2418,12 +2222,260 @@ struct TransactionFormView: View {
         return accounts.first(where: { $0.name == toAccountName })
     }
     
+    private var selectedCategory: Category? {
+        settings.categories.first { $0.name == draft.category }
+    }
+    
+    // MARK: - Theme Color
+    private var themeColor: Color {
+        switch draft.type {
+        case .expense:
+            return .red
+        case .income:
+            return .green
+        case .transfer:
+            return .blue
+        case .debt:
+            return .orange
+        }
+    }
+    
+    // MARK: - Sign Symbol
+    private var signSymbol: String {
+        switch draft.type {
+        case .expense:
+            return "-"
+        case .income:
+            return "+"
+        case .transfer:
+            return "↔"
+        case .debt:
+            return ""
+        }
+    }
+    
+    // MARK: - Transfer Icon
+    private var transferIcon: String {
+        return "arrow.left.arrow.right"
+    }
+    
     var body: some View {
         NavigationStack {
-            ScrollView {
-                formContent
+            ZStack {
+                Color.customBackground.ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Segmented Control at Top
+                        typeSegmentedControl
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                        
+                        // Hero Amount Input (Center)
+                        heroAmountField
+                            .padding(.horizontal)
+                        
+                        // Input Fields
+                        VStack(spacing: 16) {
+                            // Note/Title Field
+                            TransactionFormRow(
+                                icon: "text.alignleft",
+                                title: "Note",
+                                value: $draft.title,
+                                placeholder: "Transaction note"
+                            )
+                            
+                            // Category Field (Hidden for transfers and debt)
+                            if draft.type != .transfer && draft.type != .debt {
+                                TransactionCategoryRow(
+                                    icon: "tag",
+                                title: String(localized: "Category", comment: "Category field label"),
+                                category: selectedCategory,
+                                placeholder: String(localized: "Select Category", comment: "Category placeholder"),
+                                    onTap: { showCategoryPicker = true }
+                                )
+                            }
+                            
+                            // Contact Field (Only for debt)
+                            if draft.type == .debt {
+                                TransactionContactRow(
+                                    icon: "person.fill",
+                                    title: String(localized: "Contact", comment: "Contact field label"),
+                                    contact: selectedContact,
+                                    placeholder: String(localized: "Select Contact", comment: "Select contact placeholder"),
+                                    onTap: { showContactPicker = true }
+                                )
+                                
+                                // Debt Type Picker (Lent vs Borrowed)
+                                Picker(String(localized: "Type", comment: "Type picker"), selection: $debtTransactionType) {
+                                    ForEach([DebtTransactionType.lent, DebtTransactionType.borrowed]) { type in
+                                        Text(type.title).tag(type)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                            }
+                            
+                            // Date Field
+                            TransactionDateRow(
+                                icon: "calendar",
+                                title: String(localized: "Date", comment: "Date field label"),
+                                date: $draft.date
+                            )
+                            
+                            // Account Field(s)
+                            if draft.type == .transfer {
+                                // Transfer: From and To accounts
+                                TransactionAccountRow(
+                                    icon: "arrow.up.circle.fill",
+                                    title: String(localized: "From Account", comment: "From account field label"),
+                                    account: selectedAccount,
+                                    placeholder: String(localized: "Select From Account", comment: "From account placeholder"),
+                                    onTap: { showAccountPicker = true }
+                                )
+                                
+                                // Transfer Arrow
+                                HStack {
+                                    Spacer()
+                                    Image(systemName: "arrow.down")
+                                        .font(.title3)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.vertical, 4)
+                                    Spacer()
+                                }
+                                
+                                TransactionAccountRow(
+                                    icon: "arrow.down.circle.fill",
+                                    title: String(localized: "To Account", comment: "To account field label"),
+                                    account: selectedToAccount,
+                                    placeholder: String(localized: "Select To Account", comment: "To account placeholder"),
+                                    onTap: { showToAccountPicker = true }
+                                )
+                            } else {
+                                // Regular transaction: Single account
+                                TransactionAccountRow(
+                                    icon: "creditcard",
+                                    title: String(localized: "Account", comment: "Account field label"),
+                                    account: selectedAccount,
+                                    placeholder: String(localized: "Select Account", comment: "Account placeholder"),
+                                    onTap: { showAccountPicker = true }
+                                )
+                            }
+                            
+                            // Currency Field
+                            TransactionCurrencyRow(
+                                icon: "dollarsign.circle",
+                                title: String(localized: "Currency", comment: "Currency field label"),
+                                currency: $draft.currency
+                            )
+                        }
+                        .padding(.horizontal)
+                        
+                        // Recurring / Plan Section (only for expenses with future dates)
+                        if draft.type == .expense && draft.date > Date() {
+                            VStack(spacing: 16) {
+                                // Section Header
+                                HStack {
+                                    Text("Recurring / Plan", comment: "Recurring plan section header")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                }
+                                .padding(.horizontal)
+                                
+                                // Repeat Option
+                                VStack(spacing: 12) {
+                                    HStack {
+                                        Text("Repeat", comment: "Repeat field label")
+                                            .font(.body)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Picker(String(localized: "Repeat", comment: "Repeat picker"), selection: $repeatOption) {
+                                            ForEach(RepeatOption.allCases, id: \.self) { option in
+                                                Text(option.localizedTitle).tag(option)
+                                            }
+                                        }
+                                        .pickerStyle(.menu)
+                                    }
+                                    .padding(16)
+                                    .background(Color.customCardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                                    )
+                                }
+                                .padding(.horizontal)
+                                
+                                // Save to Planned Payments Toggle
+                                if repeatOption != .never || draft.date > Date() {
+                                    Button {
+                                        saveToPlannedPayments.toggle()
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: saveToPlannedPayments ? "checkmark.circle.fill" : "circle")
+                                                .font(.title3)
+                                                .foregroundStyle(saveToPlannedPayments ? .blue : .secondary)
+                                            Text("Save to Planned Payments", comment: "Save to planned payments toggle")
+                                                .font(.body.weight(.medium))
+                                                .foregroundStyle(.primary)
+                                            Spacer()
+                                        }
+                                        .padding(16)
+                                        .background(saveToPlannedPayments ? Color.blue.opacity(0.1) : Color.customCardBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                .stroke(saveToPlannedPayments ? Color.blue.opacity(0.3) : Color.primary.opacity(0.08), lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal)
+                                }
+                            }
+                            .padding(.top, 8)
+                        }
+                        
+                        // Save Button
+                        Button {
+                            // Handle debt transactions separately
+                            if draft.type == .debt {
+                                handleDebtSave()
+                            } else {
+                                // Save regular transaction
+                                onSave(draft)
+                                
+                                // If save to planned payments is enabled, also save to SubscriptionManager
+                                if saveToPlannedPayments && draft.type == .expense {
+                                    let subscription = PlannedPayment(
+                                        title: draft.title.isEmpty ? "Subscription" : draft.title,
+                                        amount: draft.amount,
+                                        date: draft.date,
+                                        status: .upcoming,
+                                        accountName: draft.accountName,
+                                        category: draft.category.isEmpty ? nil : draft.category,
+                                        type: .subscription,
+                                        isIncome: false
+                                    )
+                                    SubscriptionManager.shared.addSubscription(subscription)
+                                }
+                            }
+                            dismiss()
+                        } label: {
+                            Text("Save")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(draft.isValid ? draft.type.color : Color.gray.opacity(0.3))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .disabled(!draft.isValid)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                        .padding(.bottom, 20)
+                    }
+                }
             }
-            .background(Color.customBackground)
             .navigationTitle(mode.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2433,13 +2485,28 @@ struct TransactionFormView: View {
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        onSave(draft)
+                
+                // Delete button (only when editing)
+                if isEditMode && onDelete != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            showDeleteAlert = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .alert("Delete Transaction", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if case .edit(let id) = mode {
+                        onDelete?(id)
                         dismiss()
                     }
-                    .disabled(!draft.isValid)
                 }
+            } message: {
+                Text("Are you sure you want to delete this transaction? This action cannot be undone.")
             }
             .sheet(isPresented: $showCategoryPicker) {
                 categoryPickerSheet
@@ -2450,150 +2517,179 @@ struct TransactionFormView: View {
             .sheet(isPresented: $showToAccountPicker) {
                 accountPickerSheet(isFromAccount: false)
             }
-            .sheet(isPresented: $showDatePicker) {
-                compactDatePicker
+            .sheet(isPresented: $showContactPicker) {
+                contactPickerSheet
+            }
+            .onAppear {
+                // Initialize amount text from draft
+                if draft.amount == 0 {
+                    amountText = ""
+                } else {
+                    amountText = formatAmount(draft.amount)
+                }
+                // Initialize currency from settings for new transactions
+                if case .add = mode {
+                    draft.currency = settings.currency
+                }
+                // Auto-focus amount field
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isAmountFocused = true
+                }
+            }
+            .onChange(of: draft.amount) { oldValue, newValue in
+                // Sync amountText when draft.amount changes externally (e.g., from segmented control)
+                if newValue == 0 {
+                    amountText = ""
+                } else if amountText.isEmpty || abs(newValue - (Double(amountText) ?? 0)) > 0.01 {
+                    // Only update if there's a significant difference to avoid conflicts
+                    amountText = formatAmount(newValue)
+                }
+            }
+            .onChange(of: draft.type) { oldValue, newValue in
+                // Reset transfer-specific fields when changing type
+                if newValue != .transfer {
+                    draft.toAccountName = nil
+                } else if oldValue != .transfer {
+                    // When switching to transfer, ensure we have a valid setup
+                    if draft.toAccountName == nil && accounts.count > 1 {
+                        if let fromAccount = selectedAccount,
+                           let toAccount = accounts.first(where: { $0.id != fromAccount.id }) {
+                            draft.toAccountName = toAccount.name
+                        }
+                    }
+                }
+                
+                // Clear category if it doesn't match the new transaction type
+                if newValue != .transfer && newValue != .debt {
+                    if let currentCategory = selectedCategory {
+                        let expectedType: CategoryType = (newValue == .income) ? .income : .expense
+                        if currentCategory.type != expectedType {
+                            draft.category = ""
+                        }
+                    }
+                }
             }
         }
         .presentationDetents([.large])
     }
     
-    private var formContent: some View {
-        VStack(spacing: 0) {
-            // Large Amount Field at Top
-            amountField
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 24)
-            
-            // Type Picker
-            typePicker
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-            
-                    VStack(spacing: 16) {
-                        // Category Section (hidden for transfers)
-                        if draft.type != .transfer {
-                            categorySection
-                        }
-                        
-                        // Account Section(s)
-                        if draft.type == .transfer {
-                            // Transfer: Show From and To accounts
-                            transferAccountSections
-                        } else {
-                            // Regular transaction: Show single account
-                            accountSection
-                        }
-                        
-                        // Date Section
-                        dateSection
-                        
-                        // Title Field
-                        titleField
+    // MARK: - Type Segmented Control
+    private var typeSegmentedControl: some View {
+        HStack(spacing: 0) {
+            ForEach([TransactionType.expense, TransactionType.income, TransactionType.transfer, TransactionType.debt]) { type in
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        draft.type = type
                     }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 40)
-        }
-    }
-    
-    // MARK: - Amount Field
-    private var amountField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Amount")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Text(draft.type == .expense ? "-" : draft.type == .income ? "+" : "")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(draft.type.color.opacity(0.6))
-                TextField("0.00", value: $draft.amount, format: .number)
-                    .font(.system(size: 48, weight: .light))
-                    .keyboardType(.decimalPad)
-                    .foregroundStyle(.primary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
-        .background(Color.customCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-    
-    // MARK: - Type Picker
-    private var typePicker: some View {
-        Picker("Type", selection: $draft.type) {
-            ForEach(TransactionType.allCases) { type in
-                Text(type.title).tag(type)
-            }
-        }
-        .pickerStyle(.segmented)
-    }
-    
-    // MARK: - Category Section
-    private var categorySection: some View {
-        Button {
-            showCategoryPicker = true
-        } label: {
-            HStack(spacing: 12) {
-                if let selected = selectedCategory {
-                    ZStack {
-                        Circle()
-                            .fill(draft.type.color.opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: selected.iconName)
-                            .font(.headline)
-                            .foregroundStyle(draft.type.color)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Category")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(selected.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                    }
-                } else {
-                    ZStack {
-                        Circle()
-                            .fill(Color.secondary.opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: "tag")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Category")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("Select Category")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                } label: {
+                    Text(type.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(draft.type == type ? .white : .primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(draft.type == type ? type.color : Color.clear)
+                        )
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
             }
-            .padding(16)
-            .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
+        .padding(4)
+        .background(Color.customCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
     
+    // MARK: - Hero Amount Field
+    private var heroAmountField: some View {
+        VStack(spacing: 8) {
+            Text("Amount")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Spacer()
+                
+                // Small, subtle icon for transaction type (always shown, colored only)
+                if draft.type == .transfer {
+                    Image(systemName: transferIcon)
+                        .font(.title2)
+                        .foregroundStyle(themeColor)
+                } else if draft.type == .debt {
+                    Image(systemName: "creditcard.fill")
+                        .font(.title2)
+                        .foregroundStyle(themeColor)
+                } else if !signSymbol.isEmpty {
+                    Text(signSymbol)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(themeColor)
+                }
+                
+                TextField("0", text: $amountText)
+                    .font(.system(size: 64, weight: .heavy, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($isAmountFocused)
+                    .foregroundStyle(.primary)
+                    .frame(minWidth: 120)
+                    .onChange(of: amountText) { oldValue, newValue in
+                        handleAmountInput(newValue)
+                    }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+        }
+    }
+    
+    // MARK: - Amount Input Handler
+    private func handleAmountInput(_ newValue: String) {
+        // Remove any non-numeric characters except decimal point
+        let cleaned = newValue.filter { $0.isNumber || $0 == "." }
+        
+        // Handle leading zero replacement: if current amount is 0 and user types a digit, replace 0
+        if draft.amount == 0 && !cleaned.isEmpty {
+            // If the cleaned value starts with a non-zero digit, replace the zero
+            if let firstChar = cleaned.first, firstChar.isNumber, firstChar != "0" {
+                // Keep the cleaned value as-is (it already replaces the zero)
+                amountText = cleaned
+                if let value = Double(cleaned) {
+                    draft.amount = value
+                }
+                return
+            }
+        }
+        
+        // Update the text
+        amountText = cleaned
+        
+        // Convert to double and update draft
+        if cleaned.isEmpty {
+            draft.amount = 0
+        } else if let value = Double(cleaned) {
+            draft.amount = value
+        } else {
+            // If conversion fails, keep the text but don't update amount
+            // This handles cases like "5." (incomplete decimal)
+        }
+    }
+    
+    // MARK: - Format Amount
+    private func formatAmount(_ amount: Double) -> String {
+        // Format without trailing zeros
+        if amount.truncatingRemainder(dividingBy: 1) == 0 {
+            return String(format: "%.0f", amount)
+        } else {
+            let formatted = String(format: "%.2f", amount)
+            // Remove trailing zeros
+            return formatted.trimmingCharacters(in: CharacterSet(charactersIn: "0")).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        }
+    }
+    
+    // MARK: - Category Picker Sheet
     private var categoryPickerSheet: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    // Category Grid
+                    // Category Grid - Clean 4-column layout
                     let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(availableCategories) { category in
@@ -2644,105 +2740,6 @@ struct TransactionFormView: View {
         .buttonStyle(.plain)
     }
     
-    // MARK: - Account Section
-    private var accountSection: some View {
-        accountButton(
-            account: selectedAccount,
-            label: "Account",
-            placeholder: "Select Account",
-            onTap: { showAccountPicker = true }
-        )
-    }
-    
-    // MARK: - Transfer Account Sections
-    private var transferAccountSections: some View {
-        VStack(spacing: 16) {
-            // From Account
-            accountButton(
-                account: selectedAccount,
-                label: "From Account",
-                placeholder: "Select From Account",
-                icon: "arrow.up.circle.fill",
-                onTap: { showAccountPicker = true }
-            )
-            
-            // Transfer Arrow
-            HStack {
-                Spacer()
-                Image(systemName: "arrow.down")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-                Spacer()
-            }
-            
-            // To Account
-            accountButton(
-                account: selectedToAccount,
-                label: "To Account",
-                placeholder: "Select To Account",
-                icon: "arrow.down.circle.fill",
-                onTap: { showToAccountPicker = true }
-            )
-        }
-    }
-    
-    private func accountButton(account: Account?, label: String, placeholder: String, icon: String? = nil, onTap: @escaping () -> Void) -> some View {
-        Button {
-            onTap()
-        } label: {
-            HStack(spacing: 12) {
-                if let account = account {
-                    ZStack {
-                        Circle()
-                            .fill(account.accountType == .cash ? Color.green.opacity(0.15) : account.accountType == .card ? Color.blue.opacity(0.15) : Color.purple.opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: icon ?? account.iconName)
-                            .font(.headline)
-                            .foregroundStyle(account.accountType == .cash ? .green : account.accountType == .card ? .blue : .purple)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(account.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                    }
-                } else {
-                    ZStack {
-                        Circle()
-                            .fill(Color.secondary.opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        Image(systemName: icon ?? "creditcard")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(placeholder)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(16)
-            .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-    
     private func accountPickerSheet(isFromAccount: Bool) -> some View {
         NavigationStack {
             ScrollView {
@@ -2769,7 +2766,80 @@ struct TransactionFormView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+    
+    private func handleDebtSave() {
+        guard let contact = selectedContact else { return }
+        
+        let transaction = DebtTransaction(
+            id: UUID(),
+            contactId: contact.id,
+            amount: draft.amount,
+            type: debtTransactionType,
+            date: draft.date,
+            note: draft.title.isEmpty ? nil : draft.title,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        
+        debtManager.addTransaction(transaction)
+        dismiss()
+    }
+    
+    private var contactPickerSheet: some View {
+        NavigationStack {
+            ScrollView {
+                contactPickerList
+            }
+            .navigationTitle("Select Contact")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.large])
+    }
+    
+    private var contactPickerList: some View {
+        VStack(spacing: 8) {
+            ForEach(debtManager.contacts) { contact in
+                contactPickerItem(contact: contact)
+            }
+        }
+        .padding()
+    }
+    
+    private func contactPickerItem(contact: Contact) -> some View {
+        Button {
+            selectedContact = contact
+            showContactPicker = false
+        } label: {
+            HStack {
+                Circle()
+                    .fill(contact.color)
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Text(contact.initials)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                    )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(contact.name)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
+                
+                Spacer()
+                
+                if selectedContact?.id == contact.id {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.blue)
+                }
+            }
+            .padding(16)
+            .background(selectedContact?.id == contact.id ? Color.blue.opacity(0.1) : Color.customCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
     
     private func accountPickerItem(account: Account, isFromAccount: Bool) -> some View {
@@ -2828,134 +2898,14 @@ struct TransactionFormView: View {
         .buttonStyle(.plain)
     }
     
-    // MARK: - Date Section
-    private var dateSection: some View {
-        Button {
-            showDatePicker = true
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.15))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "calendar")
-                        .font(.headline)
-                        .foregroundStyle(.blue)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Date")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(formatDate(draft.date))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(16)
-            .background(Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
     
-    private var compactDatePicker: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Quick date buttons
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        quickDateButton(title: "Today", date: Date())
-                        quickDateButton(title: "Yesterday", date: Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date())
-                        quickDateButton(title: "Tomorrow", date: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date())
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                }
-                
-                Divider()
-                
-                DatePicker("", selection: $draft.date, displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .padding()
-            }
-            .background(Color.customBackground)
-            .navigationTitle("Select Date")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        showDatePicker = false
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-    
-    private func quickDateButton(title: String, date: Date) -> some View {
-        Button {
-            draft.date = date
-            showDatePicker = false
-        } label: {
-            VStack(spacing: 4) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                Text(formatDate(date))
-                    .font(.caption2)
-            }
-            .foregroundStyle(draft.date.isSameDay(as: date) ? .white : .primary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(draft.date.isSameDay(as: date) ? Color.accentColor : Color.customCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        if Calendar.current.isDateInToday(date) {
-            return "Today"
-        } else if Calendar.current.isDateInYesterday(date) {
-            return "Yesterday"
-        } else if Calendar.current.isDateInTomorrow(date) {
-            return "Tomorrow"
-        } else {
-            formatter.dateFormat = "MMM d, yyyy"
-            return formatter.string(from: date)
-        }
-    }
-    
-    // MARK: - Title Field
-    private var titleField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Title")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Transaction title", text: $draft.title)
-                .font(.subheadline)
-                .padding(16)
-                .background(Color.customCardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        }
-    }
 }
 
 struct AccountFormView: View {
     let account: Account?
     let onSave: (Account) -> Void
     let onCancel: () -> Void
+    let onDelete: ((UUID) -> Void)?
     
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -2967,11 +2917,13 @@ struct AccountFormView: View {
     @State private var isSavings: Bool
     @State private var selectedIcon: String
     @State private var showIconPicker = false
+    @State private var showDeleteAlert = false
     
-    init(account: Account?, onSave: @escaping (Account) -> Void, onCancel: @escaping () -> Void) {
+    init(account: Account?, onSave: @escaping (Account) -> Void, onCancel: @escaping () -> Void, onDelete: ((UUID) -> Void)? = nil) {
         self.account = account
         self.onSave = onSave
         self.onCancel = onCancel
+        self.onDelete = onDelete
         
         _name = State(initialValue: account?.name ?? "")
         _accountType = State(initialValue: account?.accountType ?? .card)
@@ -3047,6 +2999,18 @@ struct AccountFormView: View {
                         dismiss()
                     }
                 }
+                
+                // Delete button (only when editing)
+                if account != nil, onDelete != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            showDeleteAlert = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+                
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         let updatedAccount = Account(
@@ -3066,6 +3030,17 @@ struct AccountFormView: View {
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .alert("Delete Account", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if let accountId = account?.id {
+                        onDelete?(accountId)
+                        dismiss()
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to delete this account? All associated transactions will also be deleted. This action cannot be undone.")
+            }
             .sheet(isPresented: $showIconPicker) {
                 IconPickerView(
                     icons: CategoryIconLibrary.accountIcons,
@@ -3078,13 +3053,343 @@ struct AccountFormView: View {
     }
 }
 
+// MARK: - Transaction Form Components
+
+struct TransactionCategoryChip: View {
+    let category: Category
+    let isSelected: Bool
+    let typeColor: Color
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? category.color.opacity(0.2) : category.color.opacity(0.1))
+                        .frame(width: 56, height: 56)
+                    Image(systemName: category.iconName)
+                        .font(.title3)
+                        .foregroundStyle(isSelected ? category.color : category.color.opacity(0.7))
+                }
+                Text(category.name)
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(isSelected ? category.color.opacity(0.1) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? category.color : Color.clear, lineWidth: 2)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct TransactionFormRow: View {
+    let icon: String
+    let title: String
+    @Binding var value: String
+    let placeholder: String
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.headline)
+                .foregroundStyle(.blue)
+                .frame(width: 24)
+            
+            TextField(placeholder, text: $value)
+                .font(.body)
+        }
+        .padding(16)
+        .background(Color.customCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+struct TransactionDateRow: View {
+    let icon: String
+    let title: String
+    @Binding var date: Date
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.headline)
+                .foregroundStyle(.blue)
+                .frame(width: 24)
+            
+            Text(title)
+                .font(.body)
+                .foregroundStyle(.primary)
+            
+            Spacer()
+            
+            DatePicker("", selection: $date, displayedComponents: .date)
+                .labelsHidden()
+        }
+        .padding(16)
+        .background(Color.customCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+struct TransactionContactRow: View {
+    let icon: String
+    let title: String
+    let contact: Contact?
+    let placeholder: String
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button {
+            onTap()
+        } label: {
+            HStack(spacing: 16) {
+                if let contact = contact {
+                    Circle()
+                        .fill(contact.color)
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Text(contact.initials)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                        )
+                        .frame(width: 24)
+                    
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text(contact.name)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: icon)
+                        .font(.headline)
+                        .foregroundStyle(.blue)
+                        .frame(width: 24)
+                    
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .background(Color.customCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct TransactionCategoryRow: View {
+    let icon: String
+    let title: String
+    let category: Category?
+    let placeholder: String
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button {
+            onTap()
+        } label: {
+            HStack(spacing: 16) {
+                if let category = category {
+                    ZStack {
+                        Circle()
+                            .fill(category.color.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: category.iconName)
+                            .font(.subheadline)
+                            .foregroundStyle(category.color)
+                    }
+                    .frame(width: 24)
+                    
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text(category.name)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: icon)
+                        .font(.headline)
+                        .foregroundStyle(.blue)
+                        .frame(width: 24)
+                    
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .background(Color.customCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct TransactionAccountRow: View {
+    let icon: String
+    let title: String
+    let account: Account?
+    let placeholder: String
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button {
+            onTap()
+        } label: {
+            HStack(spacing: 16) {
+                if let account = account {
+                    ZStack {
+                        Circle()
+                            .fill(account.accountType == .cash ? Color.green.opacity(0.15) : account.accountType == .card ? Color.blue.opacity(0.15) : Color.purple.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: icon)
+                            .font(.subheadline)
+                            .foregroundStyle(account.accountType == .cash ? .green : account.accountType == .card ? .blue : .purple)
+                    }
+                    .frame(width: 24)
+                    
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text(account.name)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: icon)
+                        .font(.headline)
+                        .foregroundStyle(.blue)
+                        .frame(width: 24)
+                    
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                    
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .background(Color.customCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct TransactionCurrencyRow: View {
+    let icon: String
+    let title: String
+    @Binding var currency: String
+    
+    private let currencies = ["USD", "EUR", "GBP", "JPY", "CNY", "AUD", "CAD", "CHF", "INR", "PLN", "RUB", "BRL", "MXN", "KRW", "SGD", "HKD", "NZD", "SEK", "NOK", "DKK"]
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.headline)
+                .foregroundStyle(.blue)
+                .frame(width: 24)
+            
+            Text(title)
+                .font(.body)
+                .foregroundStyle(.primary)
+            
+            Spacer()
+            
+            Picker("", selection: $currency) {
+                ForEach(currencies, id: \.self) { code in
+                    Text(code).tag(code)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+        }
+        .padding(16)
+        .background(Color.customCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
 struct AccountDetailsView: View {
     let account: Account
     @Binding var accounts: [Account]
-    let transactions: [Transaction]
+    @Binding var transactions: [Transaction]
     @State private var showAccountForm = false
     @State private var showBalanceEditor = false
     @State private var editedBalance: Double
+    @State private var showTransactionForm = false
+    @State private var currentFormMode: TransactionFormMode = .add(.expense)
+    @State private var draftTransaction = TransactionDraft.empty(currency: "USD")
     
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
@@ -3093,15 +3398,57 @@ struct AccountDetailsView: View {
         accounts.first { $0.id == account.id }
     }
     
-    init(account: Account, accounts: Binding<[Account]>, transactions: [Transaction]) {
+    init(account: Account, accounts: Binding<[Account]>, transactions: Binding<[Transaction]>) {
         self.account = account
         self._accounts = accounts
-        self.transactions = transactions
+        self._transactions = transactions
         _editedBalance = State(initialValue: account.balance)
     }
     
     private var accountTransactions: [Transaction] {
         transactions.filter { $0.accountName == account.name }
+    }
+    
+    private func deleteAccount(_ accountId: UUID) {
+        // Delete all transactions associated with this account
+        transactions.removeAll { transaction in
+            transaction.accountName == account.name || transaction.toAccountName == account.name
+        }
+        // Delete the account
+        accounts.removeAll { $0.id == accountId }
+        // Dismiss the view
+        dismiss()
+    }
+    
+    private func deleteTransactionFromAccount(_ transaction: Transaction) {
+        transactions.removeAll { $0.id == transaction.id }
+        // Update account balances
+        updateAccountBalancesForDeletedTransaction(transaction)
+    }
+    
+    private func updateAccountBalancesForDeletedTransaction(_ transaction: Transaction) {
+        // Helper function to calculate balance change for a transaction
+        func balanceChange(for transaction: Transaction) -> Double {
+            switch transaction.type {
+            case .income:
+                return transaction.amount
+            case .expense:
+                return -transaction.amount
+            case .transfer, .debt:
+                return 0 // Transfers and debts don't change total balance of an account directly
+            }
+        }
+        
+        // Revert transaction's effect on account balance
+        if let accountIndex = accounts.firstIndex(where: { $0.name == transaction.accountName }) {
+            accounts[accountIndex].balance -= balanceChange(for: transaction)
+        }
+        
+        // For transfers, also revert the 'to' account
+        if transaction.type == .transfer, let toAccountName = transaction.toAccountName,
+           let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
+            accounts[toAccountIndex].balance += transaction.amount // Add back to 'to' account
+        }
     }
     
     private var totalIncome: Double {
@@ -3116,6 +3463,95 @@ struct AccountDetailsView: View {
             .filter { $0.type == .expense }
             .map(\.amount)
             .reduce(0, +)
+    }
+    
+    private var categories: [String] {
+        Array(Set(transactions.map(\.category))).sorted()
+    }
+    
+    private func startEditing(_ transaction: Transaction) {
+        // Reset sheet state first to ensure clean state
+        if showTransactionForm {
+            showTransactionForm = false
+            // Wait for sheet to close before opening with new mode
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.currentFormMode = .edit(transaction.id)
+                self.draftTransaction = TransactionDraft(transaction: transaction)
+                self.showTransactionForm = true
+            }
+        } else {
+            // Set the new mode and draft
+            currentFormMode = .edit(transaction.id)
+            draftTransaction = TransactionDraft(transaction: transaction)
+            showTransactionForm = true
+        }
+    }
+    
+    private func handleSave(_ draft: TransactionDraft) {
+        let oldTransaction: Transaction?
+        
+        switch currentFormMode {
+        case .add:
+            let newTransaction = draft.toTransaction(existingId: nil)
+            transactions.insert(newTransaction, at: 0)
+            oldTransaction = nil
+        case .edit(let id):
+            oldTransaction = transactions.first(where: { $0.id == id })
+            let updated = draft.toTransaction(existingId: id)
+            if let index = transactions.firstIndex(where: { $0.id == id }) {
+                transactions[index] = updated
+            }
+        }
+        
+        // Update account balances
+        updateAccountBalancesForSave(oldTransaction: oldTransaction, newDraft: draft)
+        
+        showTransactionForm = false
+    }
+    
+    private func updateAccountBalancesForSave(oldTransaction: Transaction?, newDraft: TransactionDraft) {
+        // Helper function to calculate balance change for a transaction
+        func balanceChange(for transaction: Transaction) -> Double {
+            switch transaction.type {
+            case .income:
+                return transaction.amount
+            case .expense:
+                return -transaction.amount
+            case .transfer, .debt:
+                return 0
+            }
+        }
+        
+        // Revert old transaction's effect
+        if let old = oldTransaction {
+            if let accountIndex = accounts.firstIndex(where: { $0.name == old.accountName }) {
+                accounts[accountIndex].balance -= balanceChange(for: old)
+            }
+            
+            // Handle transfers - revert from both accounts
+            if old.type == .transfer, let toAccountName = old.toAccountName,
+               let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
+                accounts[toAccountIndex].balance += old.amount
+            }
+        }
+        
+        // Apply new transaction's effect
+        let balanceChange = newDraft.type == .income ? newDraft.amount : (newDraft.type == .expense ? -newDraft.amount : 0)
+        
+        if newDraft.type == .transfer, let toAccountName = newDraft.toAccountName {
+            // Transfer: subtract from fromAccount, add to toAccount
+            if let fromAccountIndex = accounts.firstIndex(where: { $0.name == newDraft.accountName }) {
+                accounts[fromAccountIndex].balance -= newDraft.amount
+            }
+            if let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
+                accounts[toAccountIndex].balance += newDraft.amount
+            }
+        } else if newDraft.type != .debt {
+            // Income or Expense: update the account balance
+            if let accountIndex = accounts.firstIndex(where: { $0.name == newDraft.accountName }) {
+                accounts[accountIndex].balance += balanceChange
+            }
+        }
     }
     
     var body: some View {
@@ -3196,10 +3632,22 @@ struct AccountDetailsView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
                     } else {
-                        VStack(spacing: 8) {
-                            ForEach(accountTransactions) { transaction in
+                        ForEach(accountTransactions) { transaction in
+                            Button {
+                                startEditing(transaction)
+                            } label: {
                                 TransactionRow(transaction: transaction)
                             }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    deleteTransactionFromAccount(transaction)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                            .id(transaction.id)
+                            .padding(.bottom, 8)
                         }
                     }
                 }
@@ -3218,6 +3666,10 @@ struct AccountDetailsView: View {
                     showAccountForm = false
                 },
                 onCancel: {
+                    showAccountForm = false
+                },
+                onDelete: { accountId in
+                    deleteAccount(accountId)
                     showAccountForm = false
                 }
             )
@@ -3252,6 +3704,27 @@ struct AccountDetailsView: View {
                 }
             }
             .presentationDetents([.height(200)])
+        }
+        .sheet(isPresented: $showTransactionForm) {
+            TransactionFormView(
+                draft: $draftTransaction,
+                mode: currentFormMode,
+                categories: categories,
+                accounts: accounts,
+                onSave: { draft in
+                    handleSave(draft)
+                },
+                onCancel: {
+                    showTransactionForm = false
+                },
+                onDelete: { id in
+                    if let transaction = transactions.first(where: { $0.id == id }) {
+                        deleteTransactionFromAccount(transaction)
+                    }
+                    showTransactionForm = false
+                }
+            )
+            .id(currentFormMode) // Force recreation when mode changes
         }
     }
     
@@ -3780,28 +4253,45 @@ struct TransactionHistoryRow: View {
     }
 }
 
-// Update DebtFormView init to support editing
-extension DebtFormView {
-    init(contact: Contact? = nil, debtManager: DebtManager, editingTransaction: DebtTransaction? = nil, onSave: @escaping (Contact, DebtTransaction) -> Void, onCancel: @escaping () -> Void) {
-        self.contact = contact
-        self.debtManager = debtManager
-        self.onSave = onSave
-        self.onCancel = onCancel
-        _selectedContact = State(initialValue: contact)
-        _editingTransaction = State(initialValue: editingTransaction)
-        if let contact = contact {
-            _contactName = State(initialValue: contact.name)
-        }
-        if let transaction = editingTransaction {
-            _amount = State(initialValue: transaction.amount)
-            _date = State(initialValue: transaction.date)
-            _note = State(initialValue: transaction.note ?? "")
-            _transactionType = State(initialValue: transaction.type)
-            if let contact = debtManager.getContact(id: transaction.contactId) {
-                _selectedContact = State(initialValue: contact)
-                _contactName = State(initialValue: contact.name)
+
+struct StartDaySelectionView: View {
+    @Binding var selectedDay: Int
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        List {
+            ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], id: \.self) { (day: Int) in
+                Button {
+                    selectedDay = day
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text("\(day)\(daySuffix(day))")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if selectedDay == day {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
             }
         }
+        .navigationTitle("Start Day of Month")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private func daySuffix(_ day: Int) -> String {
+    switch day {
+    case 1, 21:
+        return "st"
+    case 2, 22:
+        return "nd"
+    case 3, 23:
+        return "rd"
+    default:
+        return "th"
     }
 }
 

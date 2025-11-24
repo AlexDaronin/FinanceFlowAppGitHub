@@ -36,13 +36,13 @@ struct StatisticsView: View {
                 .padding()
             }
             .background(Color.customBackground)
-            .navigationTitle("Statistics")
+            .navigationTitle(Text("Statistics", comment: "Statistics view title"))
         }
     }
     
     private var rangeSelector: some View {
         HStack {
-            Text("Overview")
+            Text("Overview", comment: "Overview label")
                 .font(.title2.bold())
                 .foregroundStyle(.primary)
             Spacer()
@@ -57,7 +57,7 @@ struct StatisticsView: View {
     
     private var incomeExpenseChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Income vs Expense")
+            Text("Income vs Expense", comment: "Income vs expense chart title")
                 .font(.headline)
                 .foregroundStyle(.primary)
             Chart {
@@ -92,7 +92,7 @@ struct StatisticsView: View {
     
     private var plannedActualCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Planned vs Actual Spending")
+            Text("Planned vs Actual Spending", comment: "Planned vs actual chart title")
                 .font(.headline)
                 .foregroundStyle(.primary)
             Chart {
@@ -129,7 +129,7 @@ struct StatisticsView: View {
     
     private var categoryBreakdown: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Category Breakdown")
+            Text("Category Breakdown", comment: "Category breakdown chart title")
                 .font(.headline)
                 .foregroundStyle(.primary)
             Chart(categorySpending) { item in

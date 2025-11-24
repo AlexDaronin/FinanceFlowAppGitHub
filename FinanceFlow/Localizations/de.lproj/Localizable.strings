@@ -1,0 +1,193 @@
+/* Dashboard */
+"Dashboard" = "Dashboard";
+"Total Balance" = "Gesamtsaldo";
+"Income" = "Einkommen";
+"Spent" = "Ausgegeben";
+"Remaining" = "Verbleibend";
+"Debts" = "Schulden";
+"Planned" = "Geplant";
+"Credits" = "Kredite";
+"Savings" = "Ersparnisse";
+"Accounts" = "Konten";
+"active" = "aktiv";
+"Due" = "Fällig";
+"No savings accounts" = "Keine Sparkonten";
+
+/* Transaction Types */
+"Expense" = "Ausgabe";
+"Transfer" = "Überweisung";
+"Debt" = "Schuld";
+
+/* Transaction Form */
+"Amount" = "Betrag";
+"Category" = "Kategorie";
+"Select Category" = "Kategorie auswählen";
+"Account" = "Konto";
+"Select Account" = "Konto auswählen";
+"From Account" = "Von Konto";
+"Select From Account" = "Quellkonto auswählen";
+"To Account" = "Zu Konto";
+"Select To Account" = "Zielkonto auswählen";
+"Date" = "Datum";
+"Title" = "Titel";
+"Transaction title" = "Transaktionstitel";
+"Note" = "Notiz";
+"Transaction note" = "Transaktionsnotiz";
+"New Transaction" = "Neue Transaktion";
+"Edit Transaction" = "Transaktion bearbeiten";
+"Save" = "Speichern";
+"Cancel" = "Abbrechen";
+"Contact" = "Kontakt";
+"Select Contact" = "Kontakt auswählen";
+"Recurring / Plan" = "Wiederkehrend / Plan";
+"Repeat" = "Wiederholen";
+"Never" = "Nie";
+"Every Month" = "Jeden Monat";
+"Every Year" = "Jedes Jahr";
+"Save to Planned Payments" = "In geplante Zahlungen speichern";
+
+/* Transactions View */
+"Transactions" = "Transaktionen";
+"Today" = "Heute";
+"Yesterday" = "Gestern";
+"Tomorrow" = "Morgen";
+"Past" = "Vergangenheit";
+"Future" = "Zukunft";
+"Missed" = "Verpasst";
+"No results" = "Keine Ergebnisse";
+"Try changing your search or filters." = "Versuchen Sie, Ihre Suche oder Filter zu ändern.";
+"No upcoming payments" = "Keine bevorstehenden Zahlungen";
+"You don't have any planned payments scheduled." = "Sie haben keine geplanten Zahlungen geplant.";
+"No missed payments" = "Keine verpassten Zahlungen";
+"All your payments are up to date." = "Alle Ihre Zahlungen sind auf dem neuesten Stand.";
+"Upcoming Payments" = "Bevorstehende Zahlungen";
+"Category:" = "Kategorie:";
+"Reset" = "Zurücksetzen";
+"Categories" = "Kategorien";
+"Types" = "Typen";
+"All Categories" = "Alle Kategorien";
+"All Types" = "Alle Typen";
+"Search transactions" = "Transaktionen suchen";
+
+/* Subscriptions View */
+"Subscriptions" = "Abonnements";
+"Expenses" = "Ausgaben";
+"Monthly Burn Rate" = "Monatliche Ausgaberate";
+"Monthly Projected Income" = "Projiziertes Monatseinkommen";
+"No plans for" = "Keine Pläne für";
+"No active expenses" = "Keine aktiven Ausgaben";
+"No active income" = "Kein aktives Einkommen";
+"This Week" = "Diese Woche";
+"Mon" = "Mo";
+"Tue" = "Di";
+"Wed" = "Mi";
+"Thu" = "Do";
+"Fri" = "Fr";
+"Sat" = "Sa";
+"Sun" = "So";
+"Delete" = "Löschen";
+"Type" = "Typ";
+"Name" = "Name";
+"Income source name" = "Einkommensquellenname";
+"Subscription name" = "Abonnementname";
+"Next Payment Date" = "Nächstes Zahlungsdatum";
+"Add Subscription" = "Abonnement hinzufügen";
+"Edit Subscription" = "Abonnement bearbeiten";
+"Add Income" = "Einkommen hinzufügen";
+"Edit Income" = "Einkommen bearbeiten";
+"Delete Subscription" = "Abonnement löschen";
+
+/* Statistics View */
+"Statistics" = "Statistiken";
+"Overview" = "Übersicht";
+"Income vs Expense" = "Einkommen vs Ausgaben";
+"Planned vs Actual Spending" = "Geplante vs tatsächliche Ausgaben";
+"Category Breakdown" = "Kategorieaufschlüsselung";
+"3M" = "3M";
+"6M" = "6M";
+"12M" = "12M";
+
+/* Plans View */
+"Plans" = "Pläne";
+"Since the beginning of the month" = "Seit Monatsbeginn";
+"Still in plans" = "Noch in Plänen";
+"Money for the month" = "Geld für den Monat";
+"Edit Expenses" = "Ausgaben bearbeiten";
+"Edit Income" = "Einkommen bearbeiten";
+"Connect banks and upload transactions for several months to get a monthly forecast." = "Verbinden Sie Banken und laden Sie Transaktionen für mehrere Monate hoch, um eine monatliche Prognose zu erhalten.";
+"Connect banks" = "Banken verbinden";
+
+/* Credits View */
+"Credits & Loans" = "Kredite und Darlehen";
+"Total Remaining Debt" = "Gesamte verbleibende Schuld";
+"No credits or loans" = "Keine Kredite oder Darlehen";
+"Next payment:" = "Nächste Zahlung:";
+"Paid" = "Bezahlt";
+"Left" = "Verbleibend";
+"Total" = "Gesamt";
+
+/* Category Management */
+"Manage Categories" = "Kategorien verwalten";
+"Search categories" = "Kategorien suchen";
+"Category Details" = "Kategoriedetails";
+"Category Name" = "Kategoriename";
+"Icon" = "Symbol";
+"Add Category" = "Kategorie hinzufügen";
+"Edit Category" = "Kategorie bearbeiten";
+"Select Icon" = "Symbol auswählen";
+"Search icons" = "Symbole suchen";
+"Done" = "Fertig";
+
+/* Settings */
+"Settings" = "Einstellungen";
+"General" = "Allgemein";
+"Currency" = "Währung";
+"Theme" = "Design";
+"Start day of month" = "Monatsanfang";
+"Language" = "Sprache";
+"Accounts & Categories" = "Konten & Kategorien";
+"Include cash in totals" = "Bargeld in Summen einbeziehen";
+"Manage accounts" = "Konten verwalten";
+"Accounts editor coming soon." = "Konteneditor kommt bald.";
+"Notifications" = "Benachrichtigungen";
+"Payment reminders" = "Zahlungserinnerungen";
+"Subscription alerts" = "Abonnementbenachrichtigungen";
+"Data & Backup" = "Daten & Backup";
+"Export local backup" = "Lokales Backup exportieren";
+"Restore from backup" = "Aus Backup wiederherstellen";
+"Premium" = "Premium";
+"Cancel subscription" = "Abonnement kündigen";
+"Start premium trial" = "Premium-Testversion starten";
+
+/* Auth View */
+"Welcome back" = "Willkommen zurück";
+"Create your account" = "Erstellen Sie Ihr Konto";
+"Full Name" = "Vollständiger Name";
+"Email" = "E-Mail";
+"Password" = "Passwort";
+"Confirm Password" = "Passwort bestätigen";
+"Sign In" = "Anmelden";
+"Sign Up" = "Registrieren";
+"or" = "oder";
+"Continue with Google" = "Mit Google fortfahren";
+"Don't have an account?" = "Haben Sie kein Konto?";
+"Already have an account?" = "Haben Sie bereits ein Konto?";
+"Sign in failed: %@" = "Anmeldung fehlgeschlagen: %@";
+"Please enter email and password" = "Bitte geben Sie E-Mail und Passwort ein";
+"Please enter your name" = "Bitte geben Sie Ihren Namen ein";
+"Passwords do not match" = "Passwörter stimmen nicht überein";
+
+/* AI Chat */
+"AI Accountant" = "KI-Buchhalter";
+"Ask anything about your money..." = "Fragen Sie alles über Ihr Geld...";
+
+/* Tab Bar */
+"AI Chat" = "KI-Chat";
+
+/* Common */
+"Select" = "Auswählen";
+"Edit" = "Bearbeiten";
+"Delete" = "Löschen";
+"Add" = "Hinzufügen";
+"Month" = "Monat";
+"Year" = "Jahr";

@@ -46,7 +46,7 @@ struct AIChatView: View {
                     .background(Color.customBackground)
             }
             .background(Color.customBackground)
-            .navigationTitle("AI Accountant")
+            .navigationTitle(Text("AI Accountant", comment: "AI Accountant title"))
         }
     }
     
@@ -92,7 +92,7 @@ struct AIChatView: View {
     
     private var composeBar: some View {
         HStack(spacing: 12) {
-            TextField("Ask anything about your money...", text: $draft, axis: .vertical)
+            TextField(String(localized: "Ask anything about your money...", comment: "AI chat placeholder"), text: $draft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
             

@@ -32,23 +32,25 @@ struct PlansView: View {
                 return .income
             }
         }
+        
+        var localizedTitle: String {
+            switch self {
+            case .expenses:
+                return String(localized: "Expenses", comment: "Expenses plan type")
+            case .income:
+                return String(localized: "Income", comment: "Income plan type")
+            }
+        }
     }
     
     private var periodStart: Date {
-        let calendar = Calendar.current
-        let today = Date()
-        let baseDate = calendar.date(byAdding: .month, value: currentPeriodOffset, to: today) ?? today
-        let todayDay = calendar.component(.day, from: baseDate)
-        let base = todayDay < settings.startDay
-            ? calendar.date(byAdding: .month, value: -1, to: baseDate) ?? baseDate
-            : baseDate
-        var components = calendar.dateComponents([.year, .month], from: base)
-        components.day = settings.startDay
-        return calendar.date(from: components) ?? baseDate
+        let referenceDate = Calendar.current.date(byAdding: .month, value: currentPeriodOffset, to: Date()) ?? Date()
+        return DateRangeHelper.periodStart(for: settings.startDay, referenceDate: referenceDate)
     }
     
     private var periodEnd: Date {
-        Calendar.current.date(byAdding: .month, value: 1, to: periodStart) ?? periodStart
+        let referenceDate = Calendar.current.date(byAdding: .month, value: currentPeriodOffset, to: Date()) ?? Date()
+        return DateRangeHelper.periodEnd(for: settings.startDay, referenceDate: referenceDate)
     }
     
     private var periodDescription: String {
@@ -183,7 +185,7 @@ struct PlansView: View {
                     .padding(.bottom, 40)
                 }
             }
-            .navigationTitle("Plans")
+            .navigationTitle(Text("Plans", comment: "Plans view title"))
             .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $showExpenseEditor) {
                 expenseEditorSheet
@@ -210,7 +212,7 @@ struct PlansView: View {
                                     .fill(selectedType == type ? Color.accentColor : Color.secondary.opacity(0.4))
                                     .frame(width: selectedType == type ? 10 : 6, height: selectedType == type ? 10 : 6)
                             }
-                            Text(type.rawValue)
+                            Text(type.localizedTitle)
                                 .font(.subheadline.weight(selectedType == type ? .semibold : .regular))
                                 .foregroundStyle(selectedType == type ? .primary : .secondary)
                         }
@@ -258,7 +260,7 @@ struct PlansView: View {
     private var metricsSection: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Since the beginning of the month")
+                Text("Since the beginning of the month", comment: "Since beginning of month label")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(currencyString(actualSinceStart))
@@ -268,7 +270,7 @@ struct PlansView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             
             VStack(alignment: .trailing, spacing: 4) {
-                Text("Still in plans")
+                Text("Still in plans", comment: "Still in plans label")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(currencyString(remainingPlanned, code: settings.currency))
@@ -382,14 +384,14 @@ struct PlansView: View {
                     .frame(width: 32, height: 32)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Connect banks and upload transactions for several months to get a monthly forecast.")
+                    Text("Connect banks and upload transactions for several months to get a monthly forecast.", comment: "Bank connection prompt")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                     
                     Button {
                         // Connect banks action
                     } label: {
-                        Text("Connect banks")
+                        Text("Connect banks", comment: "Connect banks button")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16)
@@ -419,7 +421,7 @@ struct PlansView: View {
         VStack(spacing: 12) {
             // Money for the month
             HStack {
-                Text("Money for the month")
+                Text("Money for the month", comment: "Money for month label")
                     .font(.subheadline)
                     .foregroundStyle(.primary)
                 Spacer()
@@ -441,7 +443,7 @@ struct PlansView: View {
             
             // Expenses
             HStack {
-                Text(selectedType == .expenses ? "Expenses" : "Income")
+                Text(selectedType == .expenses ? String(localized: "Expenses", comment: "Expenses label") : String(localized: "Income", comment: "Income label"))
                     .font(.subheadline)
                     .foregroundStyle(.primary)
                 Spacer()
@@ -478,23 +480,23 @@ struct PlansView: View {
     private var expenseEditorSheet: some View {
         NavigationStack {
             Form {
-                Section("Amount") {
+                Section(String(localized: "Amount", comment: "Amount section")) {
                     TextField("Amount", value: $editedExpenseAmount, format: .number)
                         .keyboardType(.decimalPad)
                 }
             }
             .background(Color.customBackground)
             .scrollContentBackground(.hidden)
-            .navigationTitle("Edit \(selectedType == .expenses ? "Expenses" : "Income")")
+            .navigationTitle(selectedType == .expenses ? String(localized: "Edit Expenses", comment: "Edit expenses title") : String(localized: "Edit Income", comment: "Edit income title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button(String(localized: "Cancel", comment: "Cancel button")) {
                         showExpenseEditor = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button(String(localized: "Save", comment: "Save button")) {
                         // Save action - would update actual spending
                         showExpenseEditor = false
                     }

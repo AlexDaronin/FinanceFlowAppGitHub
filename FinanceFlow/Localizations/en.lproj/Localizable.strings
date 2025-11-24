@@ -1,0 +1,193 @@
+/* Dashboard */
+"Dashboard" = "Dashboard";
+"Total Balance" = "Total Balance";
+"Income" = "Income";
+"Spent" = "Spent";
+"Remaining" = "Remaining";
+"Debts" = "Debts";
+"Planned" = "Planned";
+"Credits" = "Credits";
+"Savings" = "Savings";
+"Accounts" = "Accounts";
+"active" = "active";
+"Due" = "Due";
+"No savings accounts" = "No savings accounts";
+
+/* Transaction Types */
+"Expense" = "Expense";
+"Transfer" = "Transfer";
+"Debt" = "Debt";
+
+/* Transaction Form */
+"Amount" = "Amount";
+"Category" = "Category";
+"Select Category" = "Select Category";
+"Account" = "Account";
+"Select Account" = "Select Account";
+"From Account" = "From Account";
+"Select From Account" = "Select From Account";
+"To Account" = "To Account";
+"Select To Account" = "Select To Account";
+"Date" = "Date";
+"Title" = "Title";
+"Transaction title" = "Transaction title";
+"Note" = "Note";
+"Transaction note" = "Transaction note";
+"New Transaction" = "New Transaction";
+"Edit Transaction" = "Edit Transaction";
+"Save" = "Save";
+"Cancel" = "Cancel";
+"Contact" = "Contact";
+"Select Contact" = "Select Contact";
+"Recurring / Plan" = "Recurring / Plan";
+"Repeat" = "Repeat";
+"Never" = "Never";
+"Every Month" = "Every Month";
+"Every Year" = "Every Year";
+"Save to Planned Payments" = "Save to Planned Payments";
+
+/* Transactions View */
+"Transactions" = "Transactions";
+"Today" = "Today";
+"Yesterday" = "Yesterday";
+"Tomorrow" = "Tomorrow";
+"Past" = "Past";
+"Future" = "Future";
+"Missed" = "Missed";
+"No results" = "No results";
+"Try changing your search or filters." = "Try changing your search or filters.";
+"No upcoming payments" = "No upcoming payments";
+"You don't have any planned payments scheduled." = "You don't have any planned payments scheduled.";
+"No missed payments" = "No missed payments";
+"All your payments are up to date." = "All your payments are up to date.";
+"Upcoming Payments" = "Upcoming Payments";
+"Category:" = "Category:";
+"Reset" = "Reset";
+"Categories" = "Categories";
+"Types" = "Types";
+"All Categories" = "All Categories";
+"All Types" = "All Types";
+"Search transactions" = "Search transactions";
+
+/* Subscriptions View */
+"Subscriptions" = "Subscriptions";
+"Expenses" = "Expenses";
+"Monthly Burn Rate" = "Monthly Burn Rate";
+"Monthly Projected Income" = "Monthly Projected Income";
+"No plans for" = "No plans for";
+"No active expenses" = "No active expenses";
+"No active income" = "No active income";
+"This Week" = "This Week";
+"Mon" = "Mon";
+"Tue" = "Tue";
+"Wed" = "Wed";
+"Thu" = "Thu";
+"Fri" = "Fri";
+"Sat" = "Sat";
+"Sun" = "Sun";
+"Delete" = "Delete";
+"Type" = "Type";
+"Name" = "Name";
+"Income source name" = "Income source name";
+"Subscription name" = "Subscription name";
+"Next Payment Date" = "Next Payment Date";
+"Add Subscription" = "Add Subscription";
+"Edit Subscription" = "Edit Subscription";
+"Add Income" = "Add Income";
+"Edit Income" = "Edit Income";
+"Delete Subscription" = "Delete Subscription";
+
+/* Statistics View */
+"Statistics" = "Statistics";
+"Overview" = "Overview";
+"Income vs Expense" = "Income vs Expense";
+"Planned vs Actual Spending" = "Planned vs Actual Spending";
+"Category Breakdown" = "Category Breakdown";
+"3M" = "3M";
+"6M" = "6M";
+"12M" = "12M";
+
+/* Plans View */
+"Plans" = "Plans";
+"Since the beginning of the month" = "Since the beginning of the month";
+"Still in plans" = "Still in plans";
+"Money for the month" = "Money for the month";
+"Edit Expenses" = "Edit Expenses";
+"Edit Income" = "Edit Income";
+"Connect banks and upload transactions for several months to get a monthly forecast." = "Connect banks and upload transactions for several months to get a monthly forecast.";
+"Connect banks" = "Connect banks";
+
+/* Credits View */
+"Credits & Loans" = "Credits & Loans";
+"Total Remaining Debt" = "Total Remaining Debt";
+"No credits or loans" = "No credits or loans";
+"Next payment:" = "Next payment:";
+"Paid" = "Paid";
+"Left" = "Left";
+"Total" = "Total";
+
+/* Category Management */
+"Manage Categories" = "Manage Categories";
+"Search categories" = "Search categories";
+"Category Details" = "Category Details";
+"Category Name" = "Category Name";
+"Icon" = "Icon";
+"Add Category" = "Add Category";
+"Edit Category" = "Edit Category";
+"Select Icon" = "Select Icon";
+"Search icons" = "Search icons";
+"Done" = "Done";
+
+/* Settings */
+"Settings" = "Settings";
+"General" = "General";
+"Currency" = "Currency";
+"Theme" = "Theme";
+"Start day of month" = "Start day of month";
+"Language" = "Language";
+"Accounts & Categories" = "Accounts & Categories";
+"Include cash in totals" = "Include cash in totals";
+"Manage accounts" = "Manage accounts";
+"Accounts editor coming soon." = "Accounts editor coming soon.";
+"Notifications" = "Notifications";
+"Payment reminders" = "Payment reminders";
+"Subscription alerts" = "Subscription alerts";
+"Data & Backup" = "Data & Backup";
+"Export local backup" = "Export local backup";
+"Restore from backup" = "Restore from backup";
+"Premium" = "Premium";
+"Cancel subscription" = "Cancel subscription";
+"Start premium trial" = "Start premium trial";
+
+/* Auth View */
+"Welcome back" = "Welcome back";
+"Create your account" = "Create your account";
+"Full Name" = "Full Name";
+"Email" = "Email";
+"Password" = "Password";
+"Confirm Password" = "Confirm Password";
+"Sign In" = "Sign In";
+"Sign Up" = "Sign Up";
+"or" = "or";
+"Continue with Google" = "Continue with Google";
+"Don't have an account?" = "Don't have an account?";
+"Already have an account?" = "Already have an account?";
+"Sign in failed: %@" = "Sign in failed: %@";
+"Please enter email and password" = "Please enter email and password";
+"Please enter your name" = "Please enter your name";
+"Passwords do not match" = "Passwords do not match";
+
+/* AI Chat */
+"AI Accountant" = "AI Accountant";
+"Ask anything about your money..." = "Ask anything about your money...";
+
+/* Tab Bar */
+"AI Chat" = "AI Chat";
+
+/* Common */
+"Select" = "Select";
+"Edit" = "Edit";
+"Delete" = "Delete";
+"Add" = "Add";
+"Month" = "Month";
+"Year" = "Year";

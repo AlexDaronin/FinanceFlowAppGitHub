@@ -16,8 +16,10 @@ struct Transaction: Identifiable {
     let date: Date
     let type: TransactionType
     let accountName: String
+    let toAccountName: String?
+    let currency: String
     
-    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String) {
+    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil, currency: String = "USD") {
         self.id = id
         self.title = title
         self.category = category
@@ -25,10 +27,13 @@ struct Transaction: Identifiable {
         self.date = date
         self.type = type
         self.accountName = accountName
+        self.toAccountName = toAccountName
+        self.currency = currency
     }
     
-    func displayAmount(currencyCode: String = "USD") -> String {
-        let value = currencyString(abs(amount), code: currencyCode)
+    func displayAmount(currencyCode: String? = nil) -> String {
+        let code = currencyCode ?? currency
+        let value = currencyString(abs(amount), code: code)
         switch type {
         case .income:
             return "+\(value)"
@@ -42,14 +47,14 @@ struct Transaction: Identifiable {
     }
     
     static let sample: [Transaction] = [
-        Transaction(title: "Groceries", category: "Food & Dining", amount: 82.45, date: Date().addingTimeInterval(-60 * 60 * 24 * 1), type: .expense, accountName: "Main Card"),
-        Transaction(title: "Salary", category: "Income", amount: 2400, date: Date().addingTimeInterval(-60 * 60 * 24 * 2), type: .income, accountName: "Main Card"),
-        Transaction(title: "Gym Membership", category: "Health", amount: 45.99, date: Date().addingTimeInterval(-60 * 60 * 24 * 3), type: .expense, accountName: "Main Card"),
-        Transaction(title: "Coffee", category: "Food & Dining", amount: 6.75, date: Date().addingTimeInterval(-60 * 60 * 24 * 4), type: .expense, accountName: "Cash"),
-        Transaction(title: "Freelance", category: "Income", amount: 480, date: Date().addingTimeInterval(-60 * 60 * 24 * 5), type: .income, accountName: "Savings"),
-        Transaction(title: "Electric Bill", category: "Utilities", amount: 110.34, date: Date().addingTimeInterval(-60 * 60 * 24 * 6), type: .expense, accountName: "Main Card"),
-        Transaction(title: "Transfer to Savings", category: "Transfer", amount: 300, date: Date().addingTimeInterval(-60 * 60 * 24 * 7), type: .transfer, accountName: "Main Card"),
-        Transaction(title: "Debt Repayment", category: "Debt", amount: 150, date: Date().addingTimeInterval(-60 * 60 * 24 * 8), type: .debt, accountName: "Loans")
+        Transaction(title: "Groceries", category: "Food & Dining", amount: 82.45, date: Date().addingTimeInterval(-60 * 60 * 24 * 1), type: .expense, accountName: "Main Card", currency: "USD"),
+        Transaction(title: "Salary", category: "Income", amount: 2400, date: Date().addingTimeInterval(-60 * 60 * 24 * 2), type: .income, accountName: "Main Card", currency: "USD"),
+        Transaction(title: "Gym Membership", category: "Health", amount: 45.99, date: Date().addingTimeInterval(-60 * 60 * 24 * 3), type: .expense, accountName: "Main Card", currency: "USD"),
+        Transaction(title: "Coffee", category: "Food & Dining", amount: 6.75, date: Date().addingTimeInterval(-60 * 60 * 24 * 4), type: .expense, accountName: "Cash", currency: "USD"),
+        Transaction(title: "Freelance", category: "Income", amount: 480, date: Date().addingTimeInterval(-60 * 60 * 24 * 5), type: .income, accountName: "Savings", currency: "USD"),
+        Transaction(title: "Electric Bill", category: "Utilities", amount: 110.34, date: Date().addingTimeInterval(-60 * 60 * 24 * 6), type: .expense, accountName: "Main Card", currency: "USD"),
+        Transaction(title: "Transfer to Savings", category: "Transfer", amount: 300, date: Date().addingTimeInterval(-60 * 60 * 24 * 7), type: .transfer, accountName: "Main Card", currency: "USD"),
+        Transaction(title: "Debt Repayment", category: "Debt", amount: 150, date: Date().addingTimeInterval(-60 * 60 * 24 * 8), type: .debt, accountName: "Loans", currency: "USD")
     ]
 }
 
@@ -62,7 +67,16 @@ enum TransactionType: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     
     var title: String {
-        rawValue.capitalized
+        switch self {
+        case .income:
+            return String(localized: "Income", comment: "Income transaction type")
+        case .expense:
+            return String(localized: "Expense", comment: "Expense transaction type")
+        case .transfer:
+            return String(localized: "Transfer", comment: "Transfer transaction type")
+        case .debt:
+            return String(localized: "Debt", comment: "Debt transaction type")
+        }
     }
     
     var color: Color {
@@ -101,8 +115,9 @@ struct TransactionDraft: Identifiable {
     var type: TransactionType
     var accountName: String
     var toAccountName: String? // For transfer transactions
+    var currency: String
     
-    static var empty: TransactionDraft {
+    static func empty(currency: String = "USD") -> TransactionDraft {
         TransactionDraft(
             id: UUID(),
             title: "",
@@ -111,11 +126,12 @@ struct TransactionDraft: Identifiable {
             date: Date(),
             type: .expense,
             accountName: "Main Card",
-            toAccountName: nil
+            toAccountName: nil,
+            currency: currency
         )
     }
     
-    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil) {
+    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil, currency: String = "USD") {
         self.id = id
         self.title = title
         self.category = category
@@ -124,6 +140,7 @@ struct TransactionDraft: Identifiable {
         self.type = type
         self.accountName = accountName
         self.toAccountName = toAccountName
+        self.currency = currency
     }
     
     init(transaction: Transaction) {
@@ -134,10 +151,11 @@ struct TransactionDraft: Identifiable {
         self.date = transaction.date
         self.type = transaction.type
         self.accountName = transaction.accountName
-        self.toAccountName = nil // Extract from title or add to Transaction model later
+        self.toAccountName = transaction.toAccountName
+        self.currency = transaction.currency
     }
     
-    init(type: TransactionType) {
+    init(type: TransactionType, currency: String = "USD") {
         self = TransactionDraft(
             title: "",
             category: "",
@@ -145,15 +163,15 @@ struct TransactionDraft: Identifiable {
             date: Date(),
             type: type,
             accountName: "Main Card",
-            toAccountName: type == .transfer ? nil : nil
+            toAccountName: type == .transfer ? nil : nil,
+            currency: currency
         )
     }
     
     var isValid: Bool {
-        let hasTitle = !title.trimmingCharacters(in: .whitespaces).isEmpty
         let hasAmount = amount > 0
         let hasValidTransfer = type != .transfer || (toAccountName != nil && toAccountName != accountName)
-        return hasTitle && hasAmount && hasValidTransfer
+        return hasAmount && hasValidTransfer
     }
     
     func toTransaction(existingId: UUID?) -> Transaction {
@@ -164,21 +182,23 @@ struct TransactionDraft: Identifiable {
             amount: abs(amount),
             date: date,
             type: type,
-            accountName: accountName.isEmpty ? "Main Card" : accountName
+            accountName: accountName.isEmpty ? "Main Card" : accountName,
+            toAccountName: toAccountName,
+            currency: currency
         )
     }
 }
 
-enum TransactionFormMode: Equatable {
+enum TransactionFormMode: Equatable, Hashable {
     case add(TransactionType)
     case edit(UUID)
     
     var title: String {
         switch self {
         case .add:
-            return "New Transaction"
+            return String(localized: "New Transaction", comment: "New transaction form title")
         case .edit:
-            return "Edit Transaction"
+            return String(localized: "Edit Transaction", comment: "Edit transaction form title")
         }
     }
 }

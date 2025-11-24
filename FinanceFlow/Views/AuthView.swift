@@ -48,11 +48,11 @@ struct AuthView: View {
                                 )
                             )
                         
-                        Text("FinanceFlow")
+                        Text("FinanceFlow", comment: "App name")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundStyle(.primary)
                         
-                        Text(isLoginMode ? "Welcome back" : "Create your account")
+                        Text(isLoginMode ? String(localized: "Welcome back", comment: "Welcome back message") : String(localized: "Create your account", comment: "Create account message"))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -61,24 +61,24 @@ struct AuthView: View {
                     // Email/Password form
                     VStack(spacing: 16) {
                         if !isLoginMode {
-                            TextField("Full Name", text: $name)
+                            TextField(String(localized: "Full Name", comment: "Full name placeholder"), text: $name)
                                 .textFieldStyle(.roundedBorder)
                                 .textContentType(.name)
                                 .autocapitalization(.words)
                         }
                         
-                        TextField("Email", text: $email)
+                        TextField(String(localized: "Email", comment: "Email placeholder"), text: $email)
                             .textFieldStyle(.roundedBorder)
                             .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
                         
-                        SecureField("Password", text: $password)
+                        SecureField(String(localized: "Password", comment: "Password placeholder"), text: $password)
                             .textFieldStyle(.roundedBorder)
                             .textContentType(isLoginMode ? .password : .newPassword)
                         
                         if !isLoginMode {
-                            SecureField("Confirm Password", text: $confirmPassword)
+                            SecureField(String(localized: "Confirm Password", comment: "Confirm password placeholder"), text: $confirmPassword)
                                 .textFieldStyle(.roundedBorder)
                                 .textContentType(.newPassword)
                         }
@@ -91,7 +91,7 @@ struct AuthView: View {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                 } else {
-                                    Text(isLoginMode ? "Sign In" : "Sign Up")
+                                    Text(isLoginMode ? String(localized: "Sign In", comment: "Sign in button") : String(localized: "Sign Up", comment: "Sign up button"))
                                         .font(.system(size: 16, weight: .semibold))
                                 }
                             }
@@ -117,7 +117,7 @@ struct AuthView: View {
                         Rectangle()
                             .fill(Color(.separator))
                             .frame(height: 1)
-                        Text("or")
+                        Text("or", comment: "Or divider")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 12)
@@ -149,7 +149,7 @@ struct AuthView: View {
                             HStack(spacing: 12) {
                                 Image(systemName: "globe")
                                     .font(.system(size: 18, weight: .medium))
-                                Text("Continue with Google")
+                                Text("Continue with Google", comment: "Continue with Google button")
                                     .font(.system(size: 16, weight: .semibold))
                             }
                             .foregroundStyle(.primary)
@@ -173,10 +173,10 @@ struct AuthView: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text(isLoginMode ? "Don't have an account?" : "Already have an account?")
+                            Text(isLoginMode ? String(localized: "Don't have an account?", comment: "Don't have account question") : String(localized: "Already have an account?", comment: "Already have account question"))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                            Text(isLoginMode ? "Sign Up" : "Sign In")
+                            Text(isLoginMode ? String(localized: "Sign Up", comment: "Sign up link") : String(localized: "Sign In", comment: "Sign in link"))
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.blue)
                         }
@@ -217,7 +217,7 @@ struct AuthView: View {
                 }
             }
         case .failure(let error):
-            errorMessage = "Sign in failed: \(error.localizedDescription)"
+            errorMessage = String(format: String(localized: "Sign in failed: %@", comment: "Sign in failed error"), error.localizedDescription)
             isLoading = false
         }
     }
@@ -235,17 +235,17 @@ struct AuthView: View {
     private func handleEmailSignIn() {
         // Template authentication - accepts any email/password
         guard !email.isEmpty, !password.isEmpty else {
-            errorMessage = "Please enter email and password"
+            errorMessage = String(localized: "Please enter email and password", comment: "Email password required error")
             return
         }
         
         if !isLoginMode {
             guard !name.isEmpty else {
-                errorMessage = "Please enter your name"
+                errorMessage = String(localized: "Please enter your name", comment: "Name required error")
                 return
             }
             guard password == confirmPassword else {
-                errorMessage = "Passwords do not match"
+                errorMessage = String(localized: "Passwords do not match", comment: "Passwords mismatch error")
                 return
             }
         }

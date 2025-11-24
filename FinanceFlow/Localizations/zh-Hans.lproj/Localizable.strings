@@ -1,0 +1,193 @@
+/* Dashboard */
+"Dashboard" = "仪表板";
+"Total Balance" = "总余额";
+"Income" = "收入";
+"Spent" = "支出";
+"Remaining" = "剩余";
+"Debts" = "债务";
+"Planned" = "计划";
+"Credits" = "信用";
+"Savings" = "储蓄";
+"Accounts" = "账户";
+"active" = "活跃";
+"Due" = "到期";
+"No savings accounts" = "没有储蓄账户";
+
+/* Transaction Types */
+"Expense" = "支出";
+"Transfer" = "转账";
+"Debt" = "债务";
+
+/* Transaction Form */
+"Amount" = "金额";
+"Category" = "类别";
+"Select Category" = "选择类别";
+"Account" = "账户";
+"Select Account" = "选择账户";
+"From Account" = "从账户";
+"Select From Account" = "选择来源账户";
+"To Account" = "到账户";
+"Select To Account" = "选择目标账户";
+"Date" = "日期";
+"Title" = "标题";
+"Transaction title" = "交易标题";
+"Note" = "备注";
+"Transaction note" = "交易备注";
+"New Transaction" = "新交易";
+"Edit Transaction" = "编辑交易";
+"Save" = "保存";
+"Cancel" = "取消";
+"Contact" = "联系人";
+"Select Contact" = "选择联系人";
+"Recurring / Plan" = " recurring / 计划";
+"Repeat" = "重复";
+"Never" = "从不";
+"Every Month" = "每月";
+"Every Year" = "每年";
+"Save to Planned Payments" = "保存到计划付款";
+
+/* Transactions View */
+"Transactions" = "交易";
+"Today" = "今天";
+"Yesterday" = "昨天";
+"Tomorrow" = "明天";
+"Past" = "过去";
+"Future" = "未来";
+"Missed" = "已错过";
+"No results" = "无结果";
+"Try changing your search or filters." = "尝试更改搜索或筛选条件。";
+"No upcoming payments" = "没有即将到来的付款";
+"You don't have any planned payments scheduled." = "您没有安排任何计划付款。";
+"No missed payments" = "没有错过的付款";
+"All your payments are up to date." = "您的所有付款都是最新的。";
+"Upcoming Payments" = "即将到来的付款";
+"Category:" = "类别:";
+"Reset" = "重置";
+"Categories" = "类别";
+"Types" = "类型";
+"All Categories" = "所有类别";
+"All Types" = "所有类型";
+"Search transactions" = "搜索交易";
+
+/* Subscriptions View */
+"Subscriptions" = "订阅";
+"Expenses" = "支出";
+"Monthly Burn Rate" = "月度支出率";
+"Monthly Projected Income" = "月度预计收入";
+"No plans for" = "没有计划";
+"No active expenses" = "没有活跃支出";
+"No active income" = "没有活跃收入";
+"This Week" = "本周";
+"Mon" = "周一";
+"Tue" = "周二";
+"Wed" = "周三";
+"Thu" = "周四";
+"Fri" = "周五";
+"Sat" = "周六";
+"Sun" = "周日";
+"Delete" = "删除";
+"Type" = "类型";
+"Name" = "名称";
+"Income source name" = "收入来源名称";
+"Subscription name" = "订阅名称";
+"Next Payment Date" = "下次付款日期";
+"Add Subscription" = "添加订阅";
+"Edit Subscription" = "编辑订阅";
+"Add Income" = "添加收入";
+"Edit Income" = "编辑收入";
+"Delete Subscription" = "删除订阅";
+
+/* Statistics View */
+"Statistics" = "统计";
+"Overview" = "概览";
+"Income vs Expense" = "收入与支出";
+"Planned vs Actual Spending" = "计划支出与实际支出";
+"Category Breakdown" = "类别细分";
+"3M" = "3个月";
+"6M" = "6个月";
+"12M" = "12个月";
+
+/* Plans View */
+"Plans" = "计划";
+"Since the beginning of the month" = "自月初以来";
+"Still in plans" = "仍在计划中";
+"Money for the month" = "本月资金";
+"Edit Expenses" = "编辑支出";
+"Edit Income" = "编辑收入";
+"Connect banks and upload transactions for several months to get a monthly forecast." = "连接银行并上传几个月的交易以获得月度预测。";
+"Connect banks" = "连接银行";
+
+/* Credits View */
+"Credits & Loans" = "信贷和贷款";
+"Total Remaining Debt" = "总剩余债务";
+"No credits or loans" = "没有信贷或贷款";
+"Next payment:" = "下次付款:";
+"Paid" = "已付";
+"Left" = "剩余";
+"Total" = "总计";
+
+/* Category Management */
+"Manage Categories" = "管理类别";
+"Search categories" = "搜索类别";
+"Category Details" = "类别详情";
+"Category Name" = "类别名称";
+"Icon" = "图标";
+"Add Category" = "添加类别";
+"Edit Category" = "编辑类别";
+"Select Icon" = "选择图标";
+"Search icons" = "搜索图标";
+"Done" = "完成";
+
+/* Settings */
+"Settings" = "设置";
+"General" = "通用";
+"Currency" = "货币";
+"Theme" = "主题";
+"Start day of month" = "月初日期";
+"Language" = "语言";
+"Accounts & Categories" = "账户和类别";
+"Include cash in totals" = "在总计中包含现金";
+"Manage accounts" = "管理账户";
+"Accounts editor coming soon." = "账户编辑器即将推出。";
+"Notifications" = "通知";
+"Payment reminders" = "付款提醒";
+"Subscription alerts" = "订阅提醒";
+"Data & Backup" = "数据和备份";
+"Export local backup" = "导出本地备份";
+"Restore from backup" = "从备份恢复";
+"Premium" = "高级版";
+"Cancel subscription" = "取消订阅";
+"Start premium trial" = "开始高级版试用";
+
+/* Auth View */
+"Welcome back" = "欢迎回来";
+"Create your account" = "创建您的账户";
+"Full Name" = "全名";
+"Email" = "电子邮件";
+"Password" = "密码";
+"Confirm Password" = "确认密码";
+"Sign In" = "登录";
+"Sign Up" = "注册";
+"or" = "或";
+"Continue with Google" = "使用 Google 继续";
+"Don't have an account?" = "没有账户？";
+"Already have an account?" = "已有账户？";
+"Sign in failed: %@" = "登录失败: %@";
+"Please enter email and password" = "请输入电子邮件和密码";
+"Please enter your name" = "请输入您的姓名";
+"Passwords do not match" = "密码不匹配";
+
+/* AI Chat */
+"AI Accountant" = "AI 会计师";
+"Ask anything about your money..." = "询问任何关于您的资金的问题...";
+
+/* Tab Bar */
+"AI Chat" = "AI 聊天";
+
+/* Common */
+"Select" = "选择";
+"Edit" = "编辑";
+"Delete" = "删除";
+"Add" = "添加";
+"Month" = "月";
+"Year" = "年";

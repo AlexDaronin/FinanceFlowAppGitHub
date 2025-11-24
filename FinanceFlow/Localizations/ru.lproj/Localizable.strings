@@ -1,0 +1,193 @@
+/* Dashboard */
+"Dashboard" = "Панель управления";
+"Total Balance" = "Общий баланс";
+"Income" = "Доходы";
+"Spent" = "Расходы";
+"Remaining" = "Остаток";
+"Debts" = "Долги";
+"Planned" = "Запланировано";
+"Credits" = "Кредиты";
+"Savings" = "Накопления";
+"Accounts" = "Счета";
+"active" = "активных";
+"Due" = "Срок";
+"No savings accounts" = "Нет накопительных счетов";
+
+/* Transaction Types */
+"Expense" = "Расход";
+"Transfer" = "Перевод";
+"Debt" = "Долг";
+
+/* Transaction Form */
+"Amount" = "Сумма";
+"Category" = "Категория";
+"Select Category" = "Выберите категорию";
+"Account" = "Счет";
+"Select Account" = "Выберите счет";
+"From Account" = "Со счета";
+"Select From Account" = "Выберите счет списания";
+"To Account" = "На счет";
+"Select To Account" = "Выберите счет зачисления";
+"Date" = "Дата";
+"Title" = "Название";
+"Transaction title" = "Название транзакции";
+"Note" = "Заметка";
+"Transaction note" = "Заметка к транзакции";
+"New Transaction" = "Новая транзакция";
+"Edit Transaction" = "Редактировать транзакцию";
+"Save" = "Сохранить";
+"Cancel" = "Отмена";
+"Contact" = "Контакт";
+"Select Contact" = "Выберите контакт";
+"Recurring / Plan" = "Повторяющееся / План";
+"Repeat" = "Повтор";
+"Never" = "Никогда";
+"Every Month" = "Каждый месяц";
+"Every Year" = "Каждый год";
+"Save to Planned Payments" = "Сохранить в запланированные платежи";
+
+/* Transactions View */
+"Transactions" = "Транзакции";
+"Today" = "Сегодня";
+"Yesterday" = "Вчера";
+"Tomorrow" = "Завтра";
+"Past" = "Прошлое";
+"Future" = "Будущее";
+"Missed" = "Пропущенные";
+"No results" = "Нет результатов";
+"Try changing your search or filters." = "Попробуйте изменить поиск или фильтры.";
+"No upcoming payments" = "Нет предстоящих платежей";
+"You don't have any planned payments scheduled." = "У вас нет запланированных платежей.";
+"No missed payments" = "Нет пропущенных платежей";
+"All your payments are up to date." = "Все ваши платежи актуальны.";
+"Upcoming Payments" = "Предстоящие платежи";
+"Category:" = "Категория:";
+"Reset" = "Сбросить";
+"Categories" = "Категории";
+"Types" = "Типы";
+"All Categories" = "Все категории";
+"All Types" = "Все типы";
+"Search transactions" = "Поиск транзакций";
+
+/* Subscriptions View */
+"Subscriptions" = "Подписки";
+"Expenses" = "Расходы";
+"Monthly Burn Rate" = "Месячный расход";
+"Monthly Projected Income" = "Прогнозируемый доход";
+"No plans for" = "Нет планов на";
+"No active expenses" = "Нет активных расходов";
+"No active income" = "Нет активных доходов";
+"This Week" = "Эта неделя";
+"Mon" = "Пн";
+"Tue" = "Вт";
+"Wed" = "Ср";
+"Thu" = "Чт";
+"Fri" = "Пт";
+"Sat" = "Сб";
+"Sun" = "Вс";
+"Delete" = "Удалить";
+"Type" = "Тип";
+"Name" = "Название";
+"Income source name" = "Название источника дохода";
+"Subscription name" = "Название подписки";
+"Next Payment Date" = "Дата следующего платежа";
+"Add Subscription" = "Добавить подписку";
+"Edit Subscription" = "Редактировать подписку";
+"Add Income" = "Добавить доход";
+"Edit Income" = "Редактировать доход";
+"Delete Subscription" = "Удалить подписку";
+
+/* Statistics View */
+"Statistics" = "Статистика";
+"Overview" = "Обзор";
+"Income vs Expense" = "Доходы и расходы";
+"Planned vs Actual Spending" = "Запланированные и фактические расходы";
+"Category Breakdown" = "Разбивка по категориям";
+"3M" = "3М";
+"6M" = "6М";
+"12M" = "12М";
+
+/* Plans View */
+"Plans" = "Планы";
+"Since the beginning of the month" = "С начала месяца";
+"Still in plans" = "Еще в планах";
+"Money for the month" = "Деньги на месяц";
+"Edit Expenses" = "Редактировать расходы";
+"Edit Income" = "Редактировать доходы";
+"Connect banks and upload transactions for several months to get a monthly forecast." = "Подключите банки и загрузите транзакции за несколько месяцев, чтобы получить месячный прогноз.";
+"Connect banks" = "Подключить банки";
+
+/* Credits View */
+"Credits & Loans" = "Кредиты и займы";
+"Total Remaining Debt" = "Общий остаток долга";
+"No credits or loans" = "Нет кредитов или займов";
+"Next payment:" = "Следующий платеж:";
+"Paid" = "Оплачено";
+"Left" = "Осталось";
+"Total" = "Всего";
+
+/* Category Management */
+"Manage Categories" = "Управление категориями";
+"Search categories" = "Поиск категорий";
+"Category Details" = "Детали категории";
+"Category Name" = "Название категории";
+"Icon" = "Иконка";
+"Add Category" = "Добавить категорию";
+"Edit Category" = "Редактировать категорию";
+"Select Icon" = "Выбрать иконку";
+"Search icons" = "Поиск иконок";
+"Done" = "Готово";
+
+/* Settings */
+"Settings" = "Настройки";
+"General" = "Общие";
+"Currency" = "Валюта";
+"Theme" = "Тема";
+"Start day of month" = "Начало месяца";
+"Language" = "Язык";
+"Accounts & Categories" = "Счета и категории";
+"Include cash in totals" = "Включать наличные в итоги";
+"Manage accounts" = "Управление счетами";
+"Accounts editor coming soon." = "Редактор счетов скоро появится.";
+"Notifications" = "Уведомления";
+"Payment reminders" = "Напоминания о платежах";
+"Subscription alerts" = "Уведомления о подписках";
+"Data & Backup" = "Данные и резервное копирование";
+"Export local backup" = "Экспорт локальной резервной копии";
+"Restore from backup" = "Восстановить из резервной копии";
+"Premium" = "Премиум";
+"Cancel subscription" = "Отменить подписку";
+"Start premium trial" = "Начать премиум пробный период";
+
+/* Auth View */
+"Welcome back" = "Добро пожаловать";
+"Create your account" = "Создайте аккаунт";
+"Full Name" = "Полное имя";
+"Email" = "Электронная почта";
+"Password" = "Пароль";
+"Confirm Password" = "Подтвердите пароль";
+"Sign In" = "Войти";
+"Sign Up" = "Зарегистрироваться";
+"or" = "или";
+"Continue with Google" = "Продолжить с Google";
+"Don't have an account?" = "Нет аккаунта?";
+"Already have an account?" = "Уже есть аккаунт?";
+"Sign in failed: %@" = "Ошибка входа: %@";
+"Please enter email and password" = "Пожалуйста, введите email и пароль";
+"Please enter your name" = "Пожалуйста, введите ваше имя";
+"Passwords do not match" = "Пароли не совпадают";
+
+/* AI Chat */
+"AI Accountant" = "ИИ Бухгалтер";
+"Ask anything about your money..." = "Спросите что-нибудь о ваших деньгах...";
+
+/* Tab Bar */
+"AI Chat" = "ИИ Чат";
+
+/* Common */
+"Select" = "Выбрать";
+"Edit" = "Редактировать";
+"Delete" = "Удалить";
+"Add" = "Добавить";
+"Month" = "Месяц";
+"Year" = "Год";

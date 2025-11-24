@@ -7,8 +7,8 @@
 
 import Foundation
 
-struct Credit: Identifiable {
-    let id = UUID()
+struct Credit: Identifiable, Codable {
+    let id: UUID
     let title: String
     let totalAmount: Double
     let remaining: Double
@@ -16,10 +16,46 @@ struct Credit: Identifiable {
     let monthsLeft: Int
     let dueDate: Date
     let monthlyPayment: Double
+    let interestRate: Double?
+    let startDate: Date?
+    let accountName: String?
+    let termMonths: Int? // Total loan term in months (optional)
+    
+    init(
+        id: UUID = UUID(),
+        title: String,
+        totalAmount: Double,
+        remaining: Double,
+        paid: Double,
+        monthsLeft: Int,
+        dueDate: Date,
+        monthlyPayment: Double,
+        interestRate: Double? = nil,
+        startDate: Date? = nil,
+        accountName: String? = nil,
+        termMonths: Int? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.totalAmount = totalAmount
+        self.remaining = remaining
+        self.paid = paid
+        self.monthsLeft = monthsLeft
+        self.dueDate = dueDate
+        self.monthlyPayment = monthlyPayment
+        self.interestRate = interestRate
+        self.startDate = startDate
+        self.accountName = accountName
+        self.termMonths = termMonths
+    }
     
     var progress: Double {
         guard totalAmount > 0 else { return 0 }
         return (paid / totalAmount) * 100
+    }
+    
+    var percentPaid: Double {
+        progress
     }
     
     static let sample: [Credit] = {
