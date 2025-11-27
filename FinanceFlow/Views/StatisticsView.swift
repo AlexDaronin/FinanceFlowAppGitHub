@@ -9,6 +9,8 @@ import SwiftUI
 import Charts
 
 struct StatisticsView: View {
+    @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var transactionManager: TransactionManager
     @State private var summaries = MonthlySummary.sample
     @State private var categorySpending = CategorySpending.sample
     @State private var selectedRange: RangePreset = .threeMonths
@@ -26,14 +28,29 @@ struct StatisticsView: View {
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Top anchor for scroll reset
+                        Color.clear
+                            .frame(height: 0)
+                            .id("top")
+                        
+                        // Income and Expenses Summary
+                        TransactionsChartsHeader(transactions: transactionManager.transactions, currency: settings.currency)
+                            .padding(.horizontal)
+                    
                     rangeSelector
                     incomeExpenseChart
                     plannedActualCard
                     categoryBreakdown
+                    }
+                    .padding()
                 }
-                .padding()
+                .onAppear {
+                    // Reset scroll position when view appears
+                    proxy.scrollTo("top", anchor: .top)
+                }
             }
             .background(Color.customBackground)
             .navigationTitle(Text("Statistics", comment: "Statistics view title"))

@@ -8,10 +8,13 @@
 import SwiftUI
 
 struct CreditsView: View {
-    @StateObject private var manager = CreditManager.shared
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var manager: CreditManager
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @State private var showAddSheet = false
     @State private var selectedCredit: Credit?
+    @State private var creditToDelete: Credit?
+    @State private var showDeleteConfirmation = false
     
     var body: some View {
         ZStack {
@@ -19,9 +22,15 @@ struct CreditsView: View {
             Color.customBackground.ignoresSafeArea()
             
             // Middle Layer: Scrollable Content
-            ScrollView {
-                LazyVStack(spacing: 20) {
-                    // Total Remaining Debt Summary Card (Red accent)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 20) {
+                        // Top anchor for scroll reset
+                        Color.clear
+                            .frame(height: 0)
+                            .id("top")
+                        
+                        // Total Remaining Debt Summary Card (Red accent)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Total Remaining Debt", comment: "Total remaining debt label")
                             .font(.subheadline)
@@ -58,18 +67,24 @@ struct CreditsView: View {
                                 CreditCard(credit: credit)
                             }
                             .buttonStyle(.plain)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) {
-                                    manager.deleteCredit(credit)
+                                    creditToDelete = credit
+                                    showDeleteConfirmation = true
                                 } label: {
                                     Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
                                 }
                             }
                             .padding(.horizontal)
                         }
+                        }
                     }
+                    .padding(.bottom, 100) // Space for FAB button
                 }
-                .padding(.bottom, 100) // Space for FAB button
+                .onAppear {
+                    // Reset scroll position when view appears
+                    proxy.scrollTo("top", anchor: .top)
+                }
             }
             
             // Top Layer: Floating Action Button (pinned to bottom-right)
@@ -115,9 +130,32 @@ struct CreditsView: View {
                 },
                 onCancel: {
                     selectedCredit = nil
+                },
+                onDelete: { creditToDelete in
+                    manager.deleteCredit(creditToDelete)
+                    // Also delete associated PlannedPayment if it exists
+                    if let associatedPayment = subscriptionManager.subscriptions.first(where: { 
+                        $0.type == .loan && $0.title == creditToDelete.title 
+                    }) {
+                        subscriptionManager.deleteSubscription(associatedPayment)
+                    }
+                    selectedCredit = nil
                 }
             )
             .environmentObject(settings)
+        }
+        .alert("Delete Credit", isPresented: $showDeleteConfirmation, presenting: creditToDelete) { credit in
+            Button("Cancel", role: .cancel) {
+                creditToDelete = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let credit = creditToDelete {
+                    manager.deleteCredit(credit)
+                    creditToDelete = nil
+                }
+            }
+        } message: { credit in
+            Text("Are you sure you want to delete \"\(credit.title)\"? This action cannot be undone.")
         }
     }
 }

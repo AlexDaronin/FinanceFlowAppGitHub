@@ -11,10 +11,11 @@ import Combine
 import UIKit
 
 struct ContentView: View {
-    @StateObject private var settings = AppSettings()
-    @StateObject private var debtManager = DebtManager()
-    @State private var sharedTransactions = Transaction.sample
-    @State private var sharedAccounts = Account.sample
+    @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var transactionManager: TransactionManager
+    @EnvironmentObject var accountManager: AccountManager
+    @EnvironmentObject var debtManager: DebtManager
+    @State private var selectedTab: Int = 0
     
     private var colorScheme: ColorScheme? {
         switch settings.theme {
@@ -28,35 +29,43 @@ struct ContentView: View {
     }
     
     var body: some View {
-        TabView {
-            DashboardView(transactions: $sharedTransactions, accounts: $sharedAccounts)
+        TabView(selection: $selectedTab) {
+            DashboardView()
                 .tabItem {
                     Label("", systemImage: "square.grid.2x2")
                 }
+                .tag(0)
+                .id("tab-0-\(selectedTab)")
             
-            TransactionsView(transactions: $sharedTransactions, accounts: $sharedAccounts)
+            TransactionsView()
                 .tabItem {
                     Label("", systemImage: "list.bullet")
                 }
+                .tag(1)
+                .id("tab-1-\(selectedTab)")
             
             StatisticsView()
                 .tabItem {
                     Label("", systemImage: "chart.bar")
                 }
+                .tag(2)
+                .id("tab-2-\(selectedTab)")
             
             AIChatView()
                 .tabItem {
                     Label("", systemImage: "sparkles")
                 }
+                .tag(3)
+                .id("tab-3-\(selectedTab)")
             
             SettingsView()
                 .tabItem {
                     Label("", systemImage: "gearshape")
                 }
+                .tag(4)
+                .id("tab-4-\(selectedTab)")
         }
         .preferredColorScheme(colorScheme)
-        .environmentObject(settings)
-        .environmentObject(debtManager)
         .environment(\.locale, settings.locale)
         .onAppear {
             // Hide tab bar labels to make it icon-only
@@ -83,6 +92,7 @@ struct ContentView: View {
 
 struct CreditsLoansView: View {
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var accountManager: AccountManager
     @State private var credits = Credit.sample
     @State private var selectedDate = Date()
     @State private var showActionMenu = false
@@ -210,7 +220,7 @@ struct CreditsLoansView: View {
                     draft: $draftTransaction,
                     mode: currentFormMode,
                     categories: categories,
-                    accounts: Account.sample,
+                    accounts: accountManager.accounts,
                     onSave: { draft in
                         handleSave(draft)
                     },
@@ -304,7 +314,8 @@ struct CreditsLoansView: View {
     
     private func startAddingTransaction(for type: TransactionType) {
         currentFormMode = .add(type)
-        draftTransaction = TransactionDraft(type: type, currency: settings.currency)
+        let firstAccountName = accountManager.accounts.first?.name ?? ""
+        draftTransaction = TransactionDraft(type: type, currency: settings.currency, accountName: firstAccountName)
         showTransactionForm = true
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showActionMenu = false
@@ -619,6 +630,7 @@ struct DebtFormView: View {
     let debtManager: DebtManager
     let onSave: (Contact, DebtTransaction) -> Void
     let onCancel: () -> Void
+    let onDelete: ((DebtTransaction) -> Void)?
     
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
@@ -632,14 +644,39 @@ struct DebtFormView: View {
     @State private var date: Date = Date()
     @State private var note: String = ""
     @State private var editingTransaction: DebtTransaction?
+    @State private var showDeleteAlert = false
     
     @FocusState private var isAmountFocused: Bool
+    
+    init(contact: Contact? = nil, debtManager: DebtManager, editingTransaction: DebtTransaction? = nil, onSave: @escaping (Contact, DebtTransaction) -> Void, onCancel: @escaping () -> Void, onDelete: ((DebtTransaction) -> Void)? = nil) {
+        self.contact = contact
+        self.debtManager = debtManager
+        self.onSave = onSave
+        self.onCancel = onCancel
+        self.onDelete = onDelete
+        _selectedContact = State(initialValue: contact)
+        _editingTransaction = State(initialValue: editingTransaction)
+        if let contact = contact {
+            _contactName = State(initialValue: contact.name)
+        }
+        if let transaction = editingTransaction {
+            _amount = State(initialValue: transaction.amount)
+            _date = State(initialValue: transaction.date)
+            _note = State(initialValue: transaction.note ?? "")
+            _transactionType = State(initialValue: transaction.type)
+            if let contact = debtManager.getContact(id: transaction.contactId) {
+                _selectedContact = State(initialValue: contact)
+                _contactName = State(initialValue: contact.name)
+            }
+        }
+    }
     
     init(contact: Contact? = nil, debtManager: DebtManager, editingTransaction: DebtTransaction? = nil, onSave: @escaping (Contact, DebtTransaction) -> Void, onCancel: @escaping () -> Void) {
         self.contact = contact
         self.debtManager = debtManager
         self.onSave = onSave
         self.onCancel = onCancel
+        self.onDelete = nil
         _selectedContact = State(initialValue: contact)
         _editingTransaction = State(initialValue: editingTransaction)
         if let contact = contact {
@@ -736,6 +773,28 @@ struct DebtFormView: View {
                         dismiss()
                     }
                 }
+                
+                // Delete button (only when editing and onDelete is provided)
+                if editingTransaction != nil, onDelete != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            showDeleteAlert = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .alert("Delete Transaction", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if let transaction = editingTransaction {
+                        onDelete?(transaction)
+                        dismiss()
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to delete this transaction? This action cannot be undone.")
             }
             .sheet(isPresented: $showContactPicker) {
                 ContactPickerView(
@@ -877,8 +936,8 @@ struct DebtFormView: View {
     
     // MARK: - Amount Input Handler
     private func handleAmountInput(_ newValue: String) {
-        // Remove any non-numeric characters except decimal point
-        let cleaned = newValue.filter { $0.isNumber || $0 == "." }
+        // Normalize input to accept both dots and commas
+        let cleaned = normalizeDecimalInput(newValue)
         
         // Handle leading zero replacement
         if amount == 0 && !cleaned.isEmpty {
@@ -1308,9 +1367,9 @@ struct SettingsView: View {
 }
 struct TransactionsView: View {
     @EnvironmentObject var settings: AppSettings
-    @Binding var transactions: [Transaction]
-    @Binding var accounts: [Account]
-    @State private var plannedPayments = PlannedPayment.sample
+    @EnvironmentObject var transactionManager: TransactionManager
+    @EnvironmentObject var accountManager: AccountManager
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @State private var searchText = ""
     @State private var selectedCategory: String?
     @State private var selectedType: TransactionType?
@@ -1318,28 +1377,29 @@ struct TransactionsView: View {
     @State private var showTransactionForm = false
     @State private var currentFormMode: TransactionFormMode = .add(.expense)
     @State private var draftTransaction = TransactionDraft.empty(currency: "USD")
+    @State private var pendingEditMode: TransactionFormMode?
     @State private var scrollOffset: CGFloat = 0
     @State private var showPlannedPayments = false
     @State private var selectedTab: TransactionTab = .past
     
     private var categories: [String] {
-        Array(Set(transactions.map(\.category))).sorted()
+        Array(Set(transactionManager.transactions.map(\.category))).sorted()
     }
     
     private var upcomingPayments: [PlannedPayment] {
-        plannedPayments
+        subscriptionManager.subscriptions
             .filter { $0.status == .upcoming && $0.date >= Date() }
             .sorted { $0.date < $1.date }
     }
     
     private var missedPayments: [PlannedPayment] {
-        plannedPayments
+        subscriptionManager.subscriptions
             .filter { $0.status == .past || ($0.date < Date() && $0.status == .upcoming) }
             .sorted { $0.date < $1.date }
     }
     
     private var filteredTransactions: [Transaction] {
-        transactions
+        transactionManager.transactions
             .filter { transaction in
                 let matchesSearch = searchText.isEmpty ||
                 transaction.title.localizedCaseInsensitiveContains(searchText) ||
@@ -1395,6 +1455,11 @@ struct TransactionsView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: 0) {
+                            // Top anchor for scroll reset
+                            Color.clear
+                                .frame(height: 0)
+                                .id("top")
+                            
                             // Tab Buttons
                             tabButtons
                                 .padding(.horizontal, 20)
@@ -1541,6 +1606,10 @@ struct TransactionsView: View {
                             }
                         }
                     }
+                    .onAppear {
+                        // Reset scroll position when view appears
+                        proxy.scrollTo("top", anchor: .top)
+                    }
                 }
                 .background(Color.customBackground)
                 .navigationTitle(Text("Transactions", comment: "Transactions view title"))
@@ -1568,27 +1637,41 @@ struct TransactionsView: View {
                     draft: $draftTransaction,
                     mode: currentFormMode,
                     categories: categories,
-                    accounts: Account.sample,
+                    accounts: accountManager.accounts,
                     onSave: { draft in
                         handleSave(draft)
                     },
                     onCancel: {
                         showTransactionForm = false
+                        pendingEditMode = nil
                     },
                     onDelete: { id in
-                        if let transaction = transactions.first(where: { $0.id == id }) {
+                        if let transaction = transactionManager.transactions.first(where: { $0.id == id }) {
                             deleteTransaction(transaction)
                         }
                         showTransactionForm = false
+                        pendingEditMode = nil
                     }
                 )
                 .id(currentFormMode) // Force recreation when mode changes
+            }
+            .onChange(of: showTransactionForm) { oldValue, newValue in
+                // When sheet closes, check if we have a pending edit mode
+                if !newValue, let pendingMode = pendingEditMode {
+                    // Sheet just closed, now set the mode and reopen
+                    currentFormMode = pendingMode
+                    pendingEditMode = nil
+                    // Use a small delay to ensure sheet fully closes before reopening
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showTransactionForm = true
+                    }
+                }
             }
         }
     }
     
     private var tabButtons: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             // Past/Today Tab
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -1597,13 +1680,15 @@ struct TransactionsView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "house.fill")
-                        .font(.caption)
+                        .font(.caption2)
                     Text("Today", comment: "Today tab")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 .foregroundStyle(selectedTab == .past ? .white : .secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
                 .background(
                     selectedTab == .past ? Color.accentColor : Color.customCardBackground
                 )
@@ -1622,10 +1707,12 @@ struct TransactionsView: View {
                 }
             } label: {
                 Text("Missed", comment: "Missed tab")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .foregroundStyle(selectedTab == .missed ? .white : .secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
                     .background(
                         selectedTab == .missed ? Color.orange : Color.customCardBackground
                     )
@@ -1644,10 +1731,12 @@ struct TransactionsView: View {
                 }
             } label: {
                 Text("Future", comment: "Future tab")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .foregroundStyle(selectedTab == .planned ? .white : .secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
                     .background(
                         selectedTab == .planned ? Color.blue : Color.customCardBackground
                     )
@@ -1904,7 +1993,8 @@ struct TransactionsView: View {
     
     private func startAddingTransaction(for type: TransactionType) {
         currentFormMode = .add(type)
-        draftTransaction = TransactionDraft(type: type, currency: settings.currency)
+        let firstAccountName = accountManager.accounts.first?.name ?? ""
+        draftTransaction = TransactionDraft(type: type, currency: settings.currency, accountName: firstAccountName)
         showTransactionForm = true
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showActionMenu = false
@@ -1912,17 +2002,13 @@ struct TransactionsView: View {
     }
     
     private func startEditing(_ transaction: Transaction) {
-        // Reset sheet state first to ensure clean state
+        // If sheet is already open, store the pending mode and close the sheet
         if showTransactionForm {
+            pendingEditMode = .edit(transaction.id)
+            draftTransaction = TransactionDraft(transaction: transaction)
             showTransactionForm = false
-            // Wait for sheet to close before opening with new mode
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.currentFormMode = .edit(transaction.id)
-                self.draftTransaction = TransactionDraft(transaction: transaction)
-                self.showTransactionForm = true
-            }
         } else {
-            // Set the new mode and draft
+            // Sheet is closed, set mode and open immediately
             currentFormMode = .edit(transaction.id)
             draftTransaction = TransactionDraft(transaction: transaction)
             showTransactionForm = true
@@ -1935,24 +2021,23 @@ struct TransactionsView: View {
         switch currentFormMode {
         case .add:
             let newTransaction = draft.toTransaction(existingId: nil)
-            transactions.insert(newTransaction, at: 0)
+            transactionManager.addTransaction(newTransaction)
             oldTransaction = nil
         case .edit(let id):
-            oldTransaction = transactions.first(where: { $0.id == id })
+            oldTransaction = transactionManager.transactions.first(where: { $0.id == id })
             let updated = draft.toTransaction(existingId: id)
-            if let index = transactions.firstIndex(where: { $0.id == id }) {
-                transactions[index] = updated
-            }
+            transactionManager.updateTransaction(updated)
         }
         
         // Update account balances using draft (which has toAccountName for transfers)
         updateAccountBalances(oldTransaction: oldTransaction, newDraft: draft)
         
         showTransactionForm = false
+        pendingEditMode = nil
     }
     
     private func deleteTransaction(_ transaction: Transaction) {
-        transactions.removeAll { $0.id == transaction.id }
+        transactionManager.deleteTransaction(transaction)
         // Revert account balance changes for deleted transaction
         updateAccountBalances(oldTransaction: transaction, newDraft: nil)
     }
@@ -1976,14 +2061,18 @@ struct TransactionsView: View {
         
         // Revert old transaction's effect
         if let old = oldTransaction {
-            if let accountIndex = accounts.firstIndex(where: { $0.name == old.accountName }) {
-                accounts[accountIndex].balance -= balanceChange(for: old)
+            if let account = accountManager.getAccount(name: old.accountName) {
+                var updatedAccount = account
+                updatedAccount.balance -= balanceChange(for: old)
+                accountManager.updateAccount(updatedAccount)
             }
             
             // Handle transfers - revert from both accounts
             if old.type == .transfer, let toAccountName = old.toAccountName,
-               let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-                accounts[toAccountIndex].balance += old.amount // Add back to 'to' account
+               let toAccount = accountManager.getAccount(name: toAccountName) {
+                var updatedAccount = toAccount
+                updatedAccount.balance += old.amount // Add back to 'to' account
+                accountManager.updateAccount(updatedAccount)
             }
         }
         
@@ -1993,16 +2082,22 @@ struct TransactionsView: View {
             
             if draft.type == .transfer, let toAccountName = draft.toAccountName {
                 // Transfer: subtract from fromAccount, add to toAccount
-                if let fromAccountIndex = accounts.firstIndex(where: { $0.name == draft.accountName }) {
-                    accounts[fromAccountIndex].balance -= draft.amount
+                if let fromAccount = accountManager.getAccount(name: draft.accountName) {
+                    var updatedAccount = fromAccount
+                    updatedAccount.balance -= draft.amount
+                    accountManager.updateAccount(updatedAccount)
                 }
-                if let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-                    accounts[toAccountIndex].balance += draft.amount
+                if let toAccount = accountManager.getAccount(name: toAccountName) {
+                    var updatedAccount = toAccount
+                    updatedAccount.balance += draft.amount
+                    accountManager.updateAccount(updatedAccount)
                 }
             } else if draft.type != .debt {
                 // Income or Expense: update the account balance
-                if let accountIndex = accounts.firstIndex(where: { $0.name == draft.accountName }) {
-                    accounts[accountIndex].balance += balanceChange
+                if let account = accountManager.getAccount(name: draft.accountName) {
+                    var updatedAccount = account
+                    updatedAccount.balance += balanceChange
+                    accountManager.updateAccount(updatedAccount)
                 }
             }
             // Debt transactions don't affect account balance
@@ -2015,14 +2110,37 @@ struct TransactionRow: View {
     @EnvironmentObject var settings: AppSettings
     
     private var categoryIcon: String {
-        if let category = settings.categories.first(where: { $0.name == transaction.category }) {
-            return category.iconName
+        // Handle subcategory format: "Category > Subcategory"
+        if transaction.category.contains(" > ") {
+            let parts = transaction.category.split(separator: " > ")
+            let categoryName = String(parts[0])
+            let subcategoryName = String(parts[1])
+            
+            if let category = settings.categories.first(where: { $0.name == categoryName }),
+               let subcategory = category.subcategories.first(where: { $0.name == subcategoryName }) {
+                return subcategory.iconName
+            }
+            
+            if let category = settings.categories.first(where: { $0.name == categoryName }) {
+                return category.iconName
+            }
+        } else {
+            if let category = settings.categories.first(where: { $0.name == transaction.category }) {
+                return category.iconName
+            }
         }
         return transaction.type.iconName
     }
     
     private var categoryColor: Color {
-        if let category = settings.categories.first(where: { $0.name == transaction.category }) {
+        // Handle subcategory format: "Category > Subcategory"
+        let categoryName: String
+        if transaction.category.contains(" > ") {
+            categoryName = String(transaction.category.split(separator: " > ").first ?? "")
+        } else {
+            categoryName = transaction.category
+        }
+        if let category = settings.categories.first(where: { $0.name == categoryName }) {
             return category.color
         }
         return transaction.type.color
@@ -2150,6 +2268,7 @@ struct TransactionFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var debtManager: DebtManager
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @State private var showCategoryPicker = false
     @State private var showAccountPicker = false
     @State private var showToAccountPicker = false
@@ -2189,7 +2308,8 @@ struct TransactionFormView: View {
     }
     
     private var availableCategories: [Category] {
-        var filtered = settings.categories
+        // Use settings categories, fallback to defaults if empty
+        var filtered = settings.categories.isEmpty ? Category.defaultCategories : settings.categories
         
         // Filter by category type based on transaction type
         switch draft.type {
@@ -2202,10 +2322,8 @@ struct TransactionFormView: View {
             break
         }
         
-        // Additional filtering if specific categories are provided
-        if !categories.isEmpty {
-            filtered = filtered.filter { categories.contains($0.name) }
-        }
+        // Don't filter by the categories parameter - show all available categories from settings
+        // The categories parameter is just for reference, not for filtering the picker
         
         return filtered
     }
@@ -2223,7 +2341,14 @@ struct TransactionFormView: View {
     }
     
     private var selectedCategory: Category? {
-        settings.categories.first { $0.name == draft.category }
+        // Handle subcategory format: "Category > Subcategory"
+        let categoryName: String
+        if draft.category.contains(" > ") {
+            categoryName = String(draft.category.split(separator: " > ").first ?? "")
+        } else {
+            categoryName = draft.category
+        }
+        return settings.categories.first { $0.name == categoryName }
     }
     
     // MARK: - Theme Color
@@ -2291,6 +2416,7 @@ struct TransactionFormView: View {
                                     icon: "tag",
                                 title: String(localized: "Category", comment: "Category field label"),
                                 category: selectedCategory,
+                                categoryName: draft.category.isEmpty ? "" : draft.category,
                                 placeholder: String(localized: "Select Category", comment: "Category placeholder"),
                                     onTap: { showCategoryPicker = true }
                                 )
@@ -2456,7 +2582,7 @@ struct TransactionFormView: View {
                                         type: .subscription,
                                         isIncome: false
                                     )
-                                    SubscriptionManager.shared.addSubscription(subscription)
+                                    subscriptionManager.addSubscription(subscription)
                                 }
                             }
                             dismiss()
@@ -2510,6 +2636,7 @@ struct TransactionFormView: View {
             }
             .sheet(isPresented: $showCategoryPicker) {
                 categoryPickerSheet
+                    .environmentObject(settings)
             }
             .sheet(isPresented: $showAccountPicker) {
                 accountPickerSheet(isFromAccount: true)
@@ -2530,6 +2657,18 @@ struct TransactionFormView: View {
                 // Initialize currency from settings for new transactions
                 if case .add = mode {
                     draft.currency = settings.currency
+                }
+                // Validate account name - if it doesn't exist, use first available account
+                if !draft.accountName.isEmpty && !accounts.contains(where: { $0.name == draft.accountName }) {
+                    draft.accountName = accounts.first?.name ?? ""
+                } else if draft.accountName.isEmpty {
+                    draft.accountName = accounts.first?.name ?? ""
+                }
+                // Validate toAccountName for transfers
+                if draft.type == .transfer, let toAccountName = draft.toAccountName, !toAccountName.isEmpty {
+                    if !accounts.contains(where: { $0.name == toAccountName }) {
+                        draft.toAccountName = accounts.first?.name
+                    }
                 }
                 // Auto-focus amount field
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -2642,8 +2781,8 @@ struct TransactionFormView: View {
     
     // MARK: - Amount Input Handler
     private func handleAmountInput(_ newValue: String) {
-        // Remove any non-numeric characters except decimal point
-        let cleaned = newValue.filter { $0.isNumber || $0 == "." }
+        // Normalize input to accept both dots and commas
+        let cleaned = normalizeDecimalInput(newValue)
         
         // Handle leading zero replacement: if current amount is 0 and user types a digit, replace 0
         if draft.amount == 0 && !cleaned.isEmpty {
@@ -2685,22 +2824,140 @@ struct TransactionFormView: View {
     }
     
     // MARK: - Category Picker Sheet
+    @State private var expandedCategories: Set<UUID> = []
+    
     private var categoryPickerSheet: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    // Category Grid - Clean 4-column layout
-                    let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
-                    LazyVGrid(columns: columns, spacing: 16) {
+                    if availableCategories.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "folder.badge.questionmark")
+                                .font(.system(size: 48))
+                                .foregroundStyle(.secondary)
+                            Text("No categories available")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 400)
+                        .padding(.top, 100)
+                    } else {
                         ForEach(availableCategories) { category in
-                            categoryPickerItem(category: category)
-                                .id(category.id)
+                        VStack(spacing: 0) {
+                            // Category itself (can be selected) - make entire row tappable to expand if has subcategories
+                            Button {
+                                if !category.subcategories.isEmpty {
+                                    // Toggle expansion
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                        if expandedCategories.contains(category.id) {
+                                            expandedCategories.remove(category.id)
+                                        } else {
+                                            expandedCategories.insert(category.id)
+                                        }
+                                    }
+                                } else {
+                                    // No subcategories, select directly
+                                    draft.category = category.name
+                                    showCategoryPicker = false
+                                }
+                            } label: {
+                                HStack(spacing: 14) {
+                                    // Category icon
+                                    ZStack {
+                                        Circle()
+                                            .fill(category.color.opacity(0.15))
+                                            .frame(width: 44, height: 44)
+                                        Image(systemName: category.iconName)
+                                            .font(.title3)
+                                            .foregroundStyle(category.color)
+                                    }
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(category.name)
+                                            .font(.body.weight(.medium))
+                                            .foregroundStyle(.primary)
+                                        
+                                        if !category.subcategories.isEmpty {
+                                            Text("\(category.subcategories.count) \(category.subcategories.count == 1 ? "subcategory" : "subcategories")")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if !category.subcategories.isEmpty {
+                                        // Show chevron for categories with subcategories
+                                        Image(systemName: expandedCategories.contains(category.id) ? "chevron.down" : "chevron.right")
+                                            .foregroundStyle(.secondary)
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+                                    } else if draft.category == category.name || draft.category.hasPrefix("\(category.name) >") {
+                                        // Show checkmark if selected (category or any subcategory)
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(category.color)
+                                            .font(.title3)
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .background(Color.customCardBackground)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            
+                            // Subcategories (shown when expanded) - beautiful nested design
+                            if expandedCategories.contains(category.id) && !category.subcategories.isEmpty {
+                                VStack(spacing: 6) {
+                                    ForEach(category.subcategories) { subcategory in
+                                        Button {
+                                            draft.category = "\(category.name) > \(subcategory.name)"
+                                            showCategoryPicker = false
+                                        } label: {
+                                            HStack(spacing: 12) {
+                                                // Subcategory icon - larger and more prominent
+                                                ZStack {
+                                                    Circle()
+                                                        .fill(category.color.opacity(0.15))
+                                                        .frame(width: 36, height: 36)
+                                                    Image(systemName: subcategory.iconName)
+                                                        .font(.subheadline)
+                                                        .foregroundStyle(category.color)
+                                                }
+                                                
+                                                Text(subcategory.name)
+                                                    .font(.body)
+                                                    .foregroundStyle(.primary)
+                                                
+                                                Spacer()
+                                                
+                                                if draft.category == "\(category.name) > \(subcategory.name)" {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .foregroundStyle(category.color)
+                                                        .font(.title3)
+                                                }
+                                            }
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 12)
+                                            .background(Color.customSecondaryBackground)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.top, 8)
+                                .padding(.leading, 20)
+                            }
+                        }
+                        .padding(.bottom, 8)
                         }
                     }
-                    .padding(20)
                 }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
             }
             .background(Color.customBackground)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Select Category")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2711,33 +2968,8 @@ struct TransactionFormView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-    }
-    
-    private func categoryPickerItem(category: Category) -> some View {
-        Button {
-            draft.category = category.name
-            showCategoryPicker = false
-        } label: {
-            VStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(draft.category == category.name ? draft.type.color.opacity(0.2) : draft.type.color.opacity(0.1))
-                        .frame(width: 56, height: 56)
-                    Image(systemName: category.iconName)
-                        .font(.title3)
-                        .foregroundStyle(draft.category == category.name ? draft.type.color : .secondary)
-                }
-                Text(category.name)
-                    .font(.caption2)
-                    .foregroundStyle(draft.category == category.name ? .primary : .secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(height: 80)
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
+        .presentationDetents([.large])
+        .environmentObject(settings)
     }
     
     private func accountPickerSheet(isFromAccount: Bool) -> some View {
@@ -3216,6 +3448,7 @@ struct TransactionCategoryRow: View {
     let icon: String
     let title: String
     let category: Category?
+    let categoryName: String // Full category name including subcategory
     let placeholder: String
     let onTap: () -> Void
     
@@ -3241,7 +3474,7 @@ struct TransactionCategoryRow: View {
                     
                     Spacer()
                     
-                    Text(category.name)
+                    Text(categoryName.isEmpty ? category.name : categoryName)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                 } else {
@@ -3382,46 +3615,45 @@ struct TransactionCurrencyRow: View {
 
 struct AccountDetailsView: View {
     let account: Account
-    @Binding var accounts: [Account]
-    @Binding var transactions: [Transaction]
     @State private var showAccountForm = false
     @State private var showBalanceEditor = false
     @State private var editedBalance: Double
     @State private var showTransactionForm = false
     @State private var currentFormMode: TransactionFormMode = .add(.expense)
-    @State private var draftTransaction = TransactionDraft.empty(currency: "USD")
+    @State private var draftTransaction = TransactionDraft.empty(currency: "USD", accountName: "")
+    @State private var pendingEditMode: TransactionFormMode?
     
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var transactionManager: TransactionManager
+    @EnvironmentObject var accountManager: AccountManager
     
     private var currentAccount: Account? {
-        accounts.first { $0.id == account.id }
+        accountManager.accounts.first { $0.id == account.id }
     }
     
-    init(account: Account, accounts: Binding<[Account]>, transactions: Binding<[Transaction]>) {
+    init(account: Account) {
         self.account = account
-        self._accounts = accounts
-        self._transactions = transactions
         _editedBalance = State(initialValue: account.balance)
     }
     
     private var accountTransactions: [Transaction] {
-        transactions.filter { $0.accountName == account.name }
+        transactionManager.transactions.filter { $0.accountName == account.name }
     }
     
     private func deleteAccount(_ accountId: UUID) {
         // Delete all transactions associated with this account
-        transactions.removeAll { transaction in
+        transactionManager.transactions.removeAll { transaction in
             transaction.accountName == account.name || transaction.toAccountName == account.name
         }
         // Delete the account
-        accounts.removeAll { $0.id == accountId }
+        accountManager.deleteAccount(accountId)
         // Dismiss the view
         dismiss()
     }
     
     private func deleteTransactionFromAccount(_ transaction: Transaction) {
-        transactions.removeAll { $0.id == transaction.id }
+        transactionManager.deleteTransaction(transaction)
         // Update account balances
         updateAccountBalancesForDeletedTransaction(transaction)
     }
@@ -3440,14 +3672,18 @@ struct AccountDetailsView: View {
         }
         
         // Revert transaction's effect on account balance
-        if let accountIndex = accounts.firstIndex(where: { $0.name == transaction.accountName }) {
-            accounts[accountIndex].balance -= balanceChange(for: transaction)
+        if let account = accountManager.getAccount(name: transaction.accountName) {
+            var updatedAccount = account
+            updatedAccount.balance -= balanceChange(for: transaction)
+            accountManager.updateAccount(updatedAccount)
         }
         
         // For transfers, also revert the 'to' account
         if transaction.type == .transfer, let toAccountName = transaction.toAccountName,
-           let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-            accounts[toAccountIndex].balance += transaction.amount // Add back to 'to' account
+           let toAccount = accountManager.getAccount(name: toAccountName) {
+            var updatedAccount = toAccount
+            updatedAccount.balance += transaction.amount // Add back to 'to' account
+            accountManager.updateAccount(updatedAccount)
         }
     }
     
@@ -3466,21 +3702,17 @@ struct AccountDetailsView: View {
     }
     
     private var categories: [String] {
-        Array(Set(transactions.map(\.category))).sorted()
+        Array(Set(transactionManager.transactions.map(\.category))).sorted()
     }
     
     private func startEditing(_ transaction: Transaction) {
-        // Reset sheet state first to ensure clean state
+        // If sheet is already open, store the pending mode and close the sheet
         if showTransactionForm {
+            pendingEditMode = .edit(transaction.id)
+            draftTransaction = TransactionDraft(transaction: transaction)
             showTransactionForm = false
-            // Wait for sheet to close before opening with new mode
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.currentFormMode = .edit(transaction.id)
-                self.draftTransaction = TransactionDraft(transaction: transaction)
-                self.showTransactionForm = true
-            }
         } else {
-            // Set the new mode and draft
+            // Sheet is closed, set mode and open immediately
             currentFormMode = .edit(transaction.id)
             draftTransaction = TransactionDraft(transaction: transaction)
             showTransactionForm = true
@@ -3493,20 +3725,19 @@ struct AccountDetailsView: View {
         switch currentFormMode {
         case .add:
             let newTransaction = draft.toTransaction(existingId: nil)
-            transactions.insert(newTransaction, at: 0)
+            transactionManager.addTransaction(newTransaction)
             oldTransaction = nil
         case .edit(let id):
-            oldTransaction = transactions.first(where: { $0.id == id })
+            oldTransaction = transactionManager.transactions.first(where: { $0.id == id })
             let updated = draft.toTransaction(existingId: id)
-            if let index = transactions.firstIndex(where: { $0.id == id }) {
-                transactions[index] = updated
-            }
+            transactionManager.updateTransaction(updated)
         }
         
         // Update account balances
         updateAccountBalancesForSave(oldTransaction: oldTransaction, newDraft: draft)
         
         showTransactionForm = false
+        pendingEditMode = nil
     }
     
     private func updateAccountBalancesForSave(oldTransaction: Transaction?, newDraft: TransactionDraft) {
@@ -3524,14 +3755,18 @@ struct AccountDetailsView: View {
         
         // Revert old transaction's effect
         if let old = oldTransaction {
-            if let accountIndex = accounts.firstIndex(where: { $0.name == old.accountName }) {
-                accounts[accountIndex].balance -= balanceChange(for: old)
+            if let account = accountManager.getAccount(name: old.accountName) {
+                var updatedAccount = account
+                updatedAccount.balance -= balanceChange(for: old)
+                accountManager.updateAccount(updatedAccount)
             }
             
             // Handle transfers - revert from both accounts
             if old.type == .transfer, let toAccountName = old.toAccountName,
-               let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-                accounts[toAccountIndex].balance += old.amount
+               let toAccount = accountManager.getAccount(name: toAccountName) {
+                var updatedAccount = toAccount
+                updatedAccount.balance += old.amount
+                accountManager.updateAccount(updatedAccount)
             }
         }
         
@@ -3540,16 +3775,22 @@ struct AccountDetailsView: View {
         
         if newDraft.type == .transfer, let toAccountName = newDraft.toAccountName {
             // Transfer: subtract from fromAccount, add to toAccount
-            if let fromAccountIndex = accounts.firstIndex(where: { $0.name == newDraft.accountName }) {
-                accounts[fromAccountIndex].balance -= newDraft.amount
+            if let fromAccount = accountManager.getAccount(name: newDraft.accountName) {
+                var updatedAccount = fromAccount
+                updatedAccount.balance -= newDraft.amount
+                accountManager.updateAccount(updatedAccount)
             }
-            if let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-                accounts[toAccountIndex].balance += newDraft.amount
+            if let toAccount = accountManager.getAccount(name: toAccountName) {
+                var updatedAccount = toAccount
+                updatedAccount.balance += newDraft.amount
+                accountManager.updateAccount(updatedAccount)
             }
         } else if newDraft.type != .debt {
             // Income or Expense: update the account balance
-            if let accountIndex = accounts.firstIndex(where: { $0.name == newDraft.accountName }) {
-                accounts[accountIndex].balance += balanceChange
+            if let account = accountManager.getAccount(name: newDraft.accountName) {
+                var updatedAccount = account
+                updatedAccount.balance += balanceChange
+                accountManager.updateAccount(updatedAccount)
             }
         }
     }
@@ -3656,12 +3897,12 @@ struct AccountDetailsView: View {
         }
         .background(Color.customBackground)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showAccountForm) {
+                .sheet(isPresented: $showAccountForm) {
             AccountFormView(
                 account: currentAccount ?? account,
                 onSave: { updatedAccount in
-                    if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                        accounts[index] = updatedAccount
+                    if let index = accountManager.accounts.firstIndex(where: { $0.id == account.id }) {
+                        accountManager.accounts[index] = updatedAccount
                     }
                     showAccountForm = false
                 },
@@ -3695,8 +3936,9 @@ struct AccountDetailsView: View {
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
-                            if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                                accounts[index].balance = editedBalance
+                            if var updatedAccount = accountManager.getAccount(id: account.id) {
+                                updatedAccount.balance = editedBalance
+                                accountManager.updateAccount(updatedAccount)
                             }
                             showBalanceEditor = false
                         }
@@ -3710,21 +3952,35 @@ struct AccountDetailsView: View {
                 draft: $draftTransaction,
                 mode: currentFormMode,
                 categories: categories,
-                accounts: accounts,
+                accounts: accountManager.accounts,
                 onSave: { draft in
                     handleSave(draft)
                 },
                 onCancel: {
                     showTransactionForm = false
+                    pendingEditMode = nil
                 },
                 onDelete: { id in
-                    if let transaction = transactions.first(where: { $0.id == id }) {
+                    if let transaction = transactionManager.transactions.first(where: { $0.id == id }) {
                         deleteTransactionFromAccount(transaction)
                     }
                     showTransactionForm = false
+                    pendingEditMode = nil
                 }
             )
             .id(currentFormMode) // Force recreation when mode changes
+        }
+        .onChange(of: showTransactionForm) { oldValue, newValue in
+            // When sheet closes, check if we have a pending edit mode
+            if !newValue, let pendingMode = pendingEditMode {
+                // Sheet just closed, now set the mode and reopen
+                currentFormMode = pendingMode
+                pendingEditMode = nil
+                // Use a small delay to ensure sheet fully closes before reopening
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    showTransactionForm = true
+                }
+            }
         }
     }
     
@@ -3930,6 +4186,8 @@ struct ContactDetailView: View {
     @State private var showAddTransaction = false
     @State private var editingTransaction: DebtTransaction?
     @State private var showDeleteAlert = false
+    @State private var showDeleteTransactionAlert = false
+    @State private var transactionToDelete: DebtTransaction?
     
     private var contactTransactions: [DebtTransaction] {
         debtManager.getTransactions(for: contact.id)
@@ -4044,7 +4302,8 @@ struct ContactDetailView: View {
                                         editingTransaction = transaction
                                         showAddTransaction = true
                                     } onDelete: {
-                                        debtManager.deleteTransaction(transaction)
+                                        transactionToDelete = transaction
+                                        showDeleteTransactionAlert = true
                                     }
                                 }
                             }
@@ -4120,6 +4379,23 @@ struct ContactDetailView: View {
                 }
             } message: {
                 Text("Are you sure you want to delete this contact? All associated transaction history will be permanently deleted.")
+            }
+            .alert("Delete Transaction", isPresented: $showDeleteTransactionAlert) {
+                Button("Cancel", role: .cancel) {
+                    transactionToDelete = nil
+                }
+                Button("Delete", role: .destructive) {
+                    if let transaction = transactionToDelete {
+                        debtManager.deleteTransaction(transaction)
+                        transactionToDelete = nil
+                    }
+                }
+            } message: {
+                if let transaction = transactionToDelete {
+                    Text("Are you sure you want to delete this \(transaction.type.title.lowercased()) transaction of \(currencyString(transaction.amount, code: settings.currency))?")
+                } else {
+                    Text("Are you sure you want to delete this transaction?")
+                }
             }
         }
     }
@@ -4243,6 +4519,13 @@ struct TransactionHistoryRow: View {
             )
         }
         .buttonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
         .contextMenu {
             Button(role: .destructive) {
                 onDelete()

@@ -22,19 +22,33 @@ enum CategoryType: String, Codable, CaseIterable {
     }
 }
 
+struct Subcategory: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    var iconName: String
+    
+    init(id: UUID = UUID(), name: String, iconName: String = "tag.fill") {
+        self.id = id
+        self.name = name
+        self.iconName = iconName
+    }
+}
+
 struct Category: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var iconName: String
     var colorName: String
     var type: CategoryType
+    var subcategories: [Subcategory]
     
-    init(id: UUID = UUID(), name: String, iconName: String, colorName: String = "blue", type: CategoryType = .expense) {
+    init(id: UUID = UUID(), name: String, iconName: String, colorName: String = "blue", type: CategoryType = .expense, subcategories: [Subcategory] = []) {
         self.id = id
         self.name = name
         self.iconName = iconName
         self.colorName = colorName
         self.type = type
+        self.subcategories = subcategories
     }
     
     var color: Color {

@@ -18,12 +18,6 @@ class DebtManager: ObservableObject {
     
     init() {
         loadData()
-        if contacts.isEmpty {
-            // Initialize with sample data if empty
-            contacts = Contact.sample
-            transactions = DebtTransaction.sample
-            saveData()
-        }
     }
     
     // MARK: - Contact Management

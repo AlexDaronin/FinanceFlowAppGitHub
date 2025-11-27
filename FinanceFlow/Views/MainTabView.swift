@@ -8,9 +8,7 @@
 import SwiftUI
 
 struct MainTabView: View {
-    @StateObject private var settings = AppSettings()
-    @State private var sharedTransactions = Transaction.sample
-    @State private var sharedAccounts = Account.sample
+    @EnvironmentObject var settings: AppSettings
     
     private var colorScheme: ColorScheme? {
         switch settings.theme {
@@ -25,12 +23,12 @@ struct MainTabView: View {
     
     var body: some View {
         TabView {
-            DashboardView(transactions: $sharedTransactions, accounts: $sharedAccounts)
+            DashboardView()
                 .tabItem {
                     Image(systemName: "square.grid.2x2")
                 }
             
-            TransactionsView(transactions: $sharedTransactions, accounts: $sharedAccounts)
+            TransactionsView()
                 .tabItem {
                     Image(systemName: "list.bullet")
                 }
@@ -51,7 +49,6 @@ struct MainTabView: View {
                 }
         }
         .preferredColorScheme(colorScheme)
-        .environmentObject(settings)
     }
 }
 

@@ -10,10 +10,14 @@ import SwiftUI
 struct AddCreditFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     
     let existingCredit: Credit?
     let onSave: (Credit) -> Void
     let onCancel: () -> Void
+    let onDelete: ((Credit) -> Void)?
+    
+    @State private var showDeleteAlert = false
     
     @State private var title: String = ""
     @State private var totalAmount: Double = 0
@@ -46,11 +50,13 @@ struct AddCreditFormView: View {
     init(
         existingCredit: Credit? = nil,
         onSave: @escaping (Credit) -> Void,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        onDelete: ((Credit) -> Void)? = nil
     ) {
         self.existingCredit = existingCredit
         self.onSave = onSave
         self.onCancel = onCancel
+        self.onDelete = onDelete
         
         if let existing = existingCredit {
             _title = State(initialValue: existing.title)
@@ -82,7 +88,8 @@ struct AddCreditFormView: View {
     }
     
     private func handleAmountInput(_ newValue: String) {
-        let cleaned = newValue.filter { $0.isNumber || $0 == "." }
+        // Normalize input to accept both dots and commas
+        let cleaned = normalizeDecimalInput(newValue)
         
         if totalAmount == 0 && !cleaned.isEmpty {
             if let firstChar = cleaned.first, firstChar.isNumber, firstChar != "0" {
@@ -173,8 +180,8 @@ struct AddCreditFormView: View {
                                 value: Binding(
                                     get: { interestRate },
                                     set: { newValue in
-                                        let cleaned = newValue.filter { $0.isNumber || $0 == "." }
-                                        interestRate = cleaned
+                                        // Normalize input to accept both dots and commas
+                                        interestRate = normalizeDecimalInput(newValue)
                                     }
                                 ),
                                 placeholder: "Optional (e.g., 5.5)"
@@ -269,7 +276,7 @@ struct AddCreditFormView: View {
                                     startDate: startDate,
                                     interestRate: interestRateValue
                                 )
-                                SubscriptionManager.shared.addSubscription(plannedPayment)
+                                subscriptionManager.addSubscription(plannedPayment)
                             }
                         } label: {
                             Text("Save")
@@ -294,6 +301,29 @@ struct AddCreditFormView: View {
                     Button("Cancel") {
                         onCancel()
                     }
+                }
+                
+                // Delete button (only when editing and onDelete is provided)
+                if existingCredit != nil, onDelete != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            showDeleteAlert = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .alert("Delete Credit", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if let credit = existingCredit {
+                        onDelete?(credit)
+                    }
+                }
+            } message: {
+                if let credit = existingCredit {
+                    Text("Are you sure you want to delete \"\(credit.title)\"? This action cannot be undone.")
                 }
             }
             .sheet(isPresented: $showAccountPicker) {
@@ -451,7 +481,8 @@ struct CreditAmountRow: View {
                 .multilineTextAlignment(.trailing)
                 .focused($isFocused)
                 .onChange(of: amountText) { oldValue, newValue in
-                    let cleaned = newValue.filter { $0.isNumber || $0 == "." }
+                    // Normalize input to accept both dots and commas
+                    let cleaned = normalizeDecimalInput(newValue)
                     amountText = cleaned
                     if let value = Double(cleaned) {
                         amount = value
@@ -585,3 +616,4 @@ struct CreditToggleRow: View {
         )
     }
 }
+

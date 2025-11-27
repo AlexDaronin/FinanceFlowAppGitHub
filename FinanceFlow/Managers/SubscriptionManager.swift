@@ -12,17 +12,10 @@ import Combine
 class SubscriptionManager: ObservableObject {
     @Published var subscriptions: [PlannedPayment] = []
     
-    static let shared = SubscriptionManager()
-    
     private let subscriptionsKey = "savedSubscriptions"
     
-    private init() {
+    init() {
         loadData()
-        if subscriptions.isEmpty {
-            // Initialize with sample data if empty
-            subscriptions = PlannedPayment.sample.filter { $0.type == .subscription }
-            saveData()
-        }
     }
     
     // MARK: - Subscription Management

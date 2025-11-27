@@ -11,6 +11,11 @@ import SwiftUI
 struct FinanceFlowApp: App {
     @StateObject private var authManager = AuthManager()
     @StateObject private var settings = AppSettings()
+    @StateObject private var transactionManager = TransactionManager()
+    @StateObject private var accountManager = AccountManager()
+    @StateObject private var subscriptionManager = SubscriptionManager()
+    @StateObject private var debtManager = DebtManager()
+    @StateObject private var creditManager = CreditManager()
     
     var body: some Scene {
         WindowGroup {
@@ -18,6 +23,11 @@ struct FinanceFlowApp: App {
                 ContentView()
                     .environmentObject(authManager)
                     .environmentObject(settings)
+                    .environmentObject(transactionManager)
+                    .environmentObject(accountManager)
+                    .environmentObject(subscriptionManager)
+                    .environmentObject(debtManager)
+                    .environmentObject(creditManager)
                     .environment(\.locale, settings.locale)
             } else {
                 AuthView()

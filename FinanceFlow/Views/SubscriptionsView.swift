@@ -22,8 +22,8 @@ enum SubscriptionMode: String, CaseIterable {
 }
 
 struct SubscriptionsView: View {
-    @StateObject private var manager = SubscriptionManager.shared
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var manager: SubscriptionManager
     @State private var showAddSheet = false
     @State private var selectedSubscription: PlannedPayment?
     @State private var selectedMode: SubscriptionMode = .expenses
@@ -98,17 +98,23 @@ struct SubscriptionsView: View {
             Color.customBackground.ignoresSafeArea()
             
             // Middle Layer: Scrollable Content
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Segmented Control (Expenses/Income)
-                    Picker("Mode", selection: $selectedMode) {
-                        ForEach(SubscriptionMode.allCases, id: \.self) { mode in
-                            Text(mode.localizedTitle).tag(mode)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Top anchor for scroll reset
+                        Color.clear
+                            .frame(height: 0)
+                            .id("top")
+                        
+                        // Segmented Control (Expenses/Income)
+                        Picker("Mode", selection: $selectedMode) {
+                            ForEach(SubscriptionMode.allCases, id: \.self) { mode in
+                                Text(mode.localizedTitle).tag(mode)
+                            }
                         }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
                     
                     // Premium Expandable Calendar Card
                     ExpandableCalendarView(
@@ -190,8 +196,13 @@ struct SubscriptionsView: View {
                             }
                         }
                     }
+                    }
+                    .padding(.bottom, 100) // Space for FAB button
                 }
-                .padding(.bottom, 100) // Space for FAB button
+                .onAppear {
+                    // Reset scroll position when view appears
+                    proxy.scrollTo("top", anchor: .top)
+                }
             }
             
             // Top Layer: Floating Action Button (pinned to bottom-right)

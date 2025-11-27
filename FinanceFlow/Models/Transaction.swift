@@ -8,7 +8,7 @@
 import Foundation
 import SwiftUI
 
-struct Transaction: Identifiable {
+struct Transaction: Identifiable, Codable, Equatable {
     let id: UUID
     let title: String
     let category: String
@@ -58,7 +58,7 @@ struct Transaction: Identifiable {
     ]
 }
 
-enum TransactionType: String, CaseIterable, Identifiable {
+enum TransactionType: String, CaseIterable, Identifiable, Codable {
     case income
     case expense
     case transfer
@@ -117,7 +117,7 @@ struct TransactionDraft: Identifiable {
     var toAccountName: String? // For transfer transactions
     var currency: String
     
-    static func empty(currency: String = "USD") -> TransactionDraft {
+    static func empty(currency: String = "USD", accountName: String = "") -> TransactionDraft {
         TransactionDraft(
             id: UUID(),
             title: "",
@@ -125,7 +125,7 @@ struct TransactionDraft: Identifiable {
             amount: 0,
             date: Date(),
             type: .expense,
-            accountName: "Main Card",
+            accountName: accountName,
             toAccountName: nil,
             currency: currency
         )
@@ -155,14 +155,14 @@ struct TransactionDraft: Identifiable {
         self.currency = transaction.currency
     }
     
-    init(type: TransactionType, currency: String = "USD") {
+    init(type: TransactionType, currency: String = "USD", accountName: String = "") {
         self = TransactionDraft(
             title: "",
             category: "",
             amount: 0,
             date: Date(),
             type: type,
-            accountName: "Main Card",
+            accountName: accountName,
             toAccountName: type == .transfer ? nil : nil,
             currency: currency
         )
@@ -182,7 +182,7 @@ struct TransactionDraft: Identifiable {
             amount: abs(amount),
             date: date,
             type: type,
-            accountName: accountName.isEmpty ? "Main Card" : accountName,
+            accountName: accountName,
             toAccountName: toAccountName,
             currency: currency
         )

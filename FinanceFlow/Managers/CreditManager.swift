@@ -12,17 +12,10 @@ import Combine
 class CreditManager: ObservableObject {
     @Published var credits: [Credit] = []
     
-    static let shared = CreditManager()
-    
     private let creditsKey = "savedCredits"
     
-    private init() {
+    init() {
         loadData()
-        if credits.isEmpty {
-            // Initialize with sample data if empty
-            credits = Credit.sample
-            saveData()
-        }
     }
     
     // MARK: - Credit Management

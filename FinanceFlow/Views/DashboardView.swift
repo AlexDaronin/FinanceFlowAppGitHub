@@ -10,12 +10,11 @@ import Charts
 
 struct DashboardView: View {
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var transactionManager: TransactionManager
+    @EnvironmentObject var accountManager: AccountManager
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @EnvironmentObject var debtManager: DebtManager
-    @ObservedObject private var subManager = SubscriptionManager.shared
-    @Binding var transactions: [Transaction]
-    @Binding var accounts: [Account]
-    @State private var selectedAccountId: UUID = Account.sample.first?.id ?? UUID()
-    @State private var plannedPayments = PlannedPayment.sample
+    @State private var selectedAccountId: UUID = UUID()
     @State private var showActionMenu = false
     @State private var showTransactionForm = false
     @State private var currentFormMode: TransactionFormMode = .add(.expense)
@@ -29,14 +28,14 @@ struct DashboardView: View {
     @State private var showNonPinnedSavings = false
     
     private let timelinePoints = TimelinePoint.sample
-    private let creditSummary = CreditSummary.sample
+    @EnvironmentObject var creditManager: CreditManager
     
     private var selectedAccount: Account? {
-        accounts.first { $0.id == selectedAccountId }
+        accountManager.accounts.first { $0.id == selectedAccountId }
     }
     
     private var totalIncludedBalance: Double {
-        accounts
+        accountManager.accounts
             .filter { $0.includedInTotal }
             .map(\.balance)
             .reduce(0, +)
@@ -44,11 +43,11 @@ struct DashboardView: View {
     
     private var quickStats: QuickStats {
         let period = DateRangeHelper.currentPeriod(for: settings.startDay)
-        let income = transactions
+        let income = transactionManager.transactions
             .filter { $0.type == .income && $0.date >= period.start && $0.date < period.end }
             .map(\.amount)
             .reduce(0, +)
-        let spent = transactions
+        let spent = transactionManager.transactions
             .filter { $0.type == .expense && $0.date >= period.start && $0.date < period.end }
             .map(\.amount)
             .reduce(0, +)
@@ -85,21 +84,25 @@ struct DashboardView: View {
     }
     
     private var activePlannedCount: Int {
-        plannedPayments.filter { $0.status == .upcoming }.count
+        subscriptionManager.subscriptions.filter { $0.status == .upcoming }.count
     }
     
     private var upcomingPlannedAmount: Double {
-        plannedPayments
+        subscriptionManager.subscriptions
             .filter { $0.status == .upcoming }
             .map(\.amount)
             .reduce(0, +)
     }
     
     private var totalSavings: Double {
-        accounts
+        accountManager.accounts
             .filter { $0.isSavings }
             .map(\.balance)
             .reduce(0, +)
+    }
+    
+    private var hasSavingsAccounts: Bool {
+        accountManager.accounts.contains { $0.isSavings }
     }
     
     // Calculate total debts from DebtManager (money I owe to people)
@@ -109,7 +112,7 @@ struct DashboardView: View {
     }
     
     private var categories: [String] {
-        Array(Set(transactions.map(\.category))).sorted()
+        Array(Set(transactionManager.transactions.map(\.category))).sorted()
     }
     
     private let actionOptions: [ActionMenuOption] = ActionMenuOption.transactions
@@ -117,17 +120,23 @@ struct DashboardView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        summaryCard
-                        quickStatsSection
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            // Top anchor for scroll reset
+                            Color.clear
+                                .frame(height: 0)
+                                .id("top")
+                            
+                            summaryCard
+                            quickStatsSection
                         
                         // Accounts and Savings grouped together with reduced spacing
                         VStack(alignment: .leading, spacing: 12) {
                             accountsSection
                             
                             // Savings section (if there are savings accounts)
-                            if totalSavings > 0 {
+                            if hasSavingsAccounts {
                                 savingsSection
                             }
                         }
@@ -138,12 +147,17 @@ struct DashboardView: View {
                         
                         financialOverviewSection
                         // Spending Projection Chart
-                        SpendingProjectionChart(transactions: transactions)
+                        SpendingProjectionChart(transactions: transactionManager.transactions)
                             .environmentObject(settings)
                     }
-                    .padding(.horizontal)
-                    .padding(.top)
-                    .padding(.bottom, 120)
+                        .padding(.horizontal)
+                        .padding(.top)
+                        .padding(.bottom, 120)
+                    }
+                    .onAppear {
+                        // Reset scroll position when view appears
+                        proxy.scrollTo("top", anchor: .top)
+                    }
                 }
             .background(Color.customBackground)
             .navigationTitle(Text("Dashboard"))
@@ -155,7 +169,7 @@ struct DashboardView: View {
                     draft: $draftTransaction,
                     mode: currentFormMode,
                     categories: categories,
-                    accounts: accounts,
+                    accounts: accountManager.accounts,
                     onSave: { draft in
                         handleSave(draft)
                     },
@@ -163,12 +177,15 @@ struct DashboardView: View {
                         showTransactionForm = false
                     },
                     onDelete: { id in
-                        if let transaction = transactions.first(where: { $0.id == id }) {
+                        if let transaction = transactionManager.transactions.first(where: { $0.id == id }) {
                             deleteTransaction(transaction)
                         }
                         showTransactionForm = false
                     }
                 )
+                .environmentObject(settings)
+                .environmentObject(debtManager)
+                .environmentObject(subscriptionManager)
                 .id(currentFormMode) // Force recreation when mode changes
             }
         }
@@ -261,25 +278,29 @@ struct DashboardView: View {
             .buttonStyle(.plain)
             
             // Subscriptions (tappable)
-            NavigationLink(destination: SubscriptionsView().environmentObject(settings)) {
+            NavigationLink(destination: SubscriptionsView()
+                .environmentObject(settings)
+                .environmentObject(subscriptionManager)) {
                 financialOverviewRow(
                     title: String(localized: "Planned", comment: "Planned payments section title"),
-                    amount: subManager.monthlyBurnRate(startDay: settings.startDay),
+                    amount: subscriptionManager.monthlyBurnRate(startDay: settings.startDay),
                     icon: "arrow.triangle.2.circlepath",
                     color: .blue,
-                    subtitle: "\(subManager.activeSubscriptionsCount(startDay: settings.startDay)) \(String(localized: "active", comment: "Active subscriptions count"))"
+                    subtitle: "\(subscriptionManager.activeSubscriptionsCount(startDay: settings.startDay)) \(String(localized: "active", comment: "Active subscriptions count"))"
                 )
             }
             .buttonStyle(.plain)
             
             // Credits (tappable)
-            NavigationLink(destination: CreditsView().environmentObject(settings)) {
+            NavigationLink(destination: CreditsView()
+                .environmentObject(settings)
+                .environmentObject(creditManager)) {
                 financialOverviewRow(
                     title: String(localized: "Credits", comment: "Credits section title"),
-                    amount: creditSummary.remaining,
+                    amount: creditManager.totalRemaining,
                     icon: "creditcard.fill",
                     color: .red,
-                    subtitle: "\(String(localized: "Due", comment: "Due date prefix")) \(shortDate(creditSummary.nextDue))",
+                    subtitle: creditManager.nextDueDate.map { "\(String(localized: "Due", comment: "Due date prefix")) \(shortDate($0))" },
                     showNegative: true
                 )
             }
@@ -309,7 +330,7 @@ struct DashboardView: View {
             
             VStack(spacing: 6) {
                 // Show savings accounts
-                let savingsAccounts = accounts.filter { $0.isSavings }
+                let savingsAccounts = accountManager.accounts.filter { $0.isSavings }
                 let pinnedSavings = savingsAccounts.filter { $0.isPinned }
                 let nonPinnedSavings = savingsAccounts.filter { !$0.isPinned }
                 
@@ -320,8 +341,11 @@ struct DashboardView: View {
                         .padding(.vertical, 8)
                 } else {
                     // Show pinned savings accounts
-                    ForEach(pinnedSavings) { account in
-                        NavigationLink(destination: AccountDetailsView(account: account, accounts: $accounts, transactions: $transactions)) {
+                            ForEach(pinnedSavings) { account in
+                        NavigationLink(destination: AccountDetailsView(account: account)
+                            .environmentObject(settings)
+                            .environmentObject(transactionManager)
+                            .environmentObject(accountManager)) {
                             AccountRow(
                                 account: account,
                                 isSelected: account.id == selectedAccountId,
@@ -357,7 +381,10 @@ struct DashboardView: View {
                         // Show non-pinned savings accounts if expanded (animated content below button)
                         if showNonPinnedSavings {
                             ForEach(nonPinnedSavings) { account in
-                                NavigationLink(destination: AccountDetailsView(account: account, accounts: $accounts, transactions: $transactions)) {
+                                NavigationLink(destination: AccountDetailsView(account: account)
+                                    .environmentObject(settings)
+                                    .environmentObject(transactionManager)
+                                    .environmentObject(accountManager)) {
                                     AccountRow(
                                         account: account,
                                         isSelected: account.id == selectedAccountId,
@@ -444,7 +471,7 @@ struct DashboardView: View {
             
             VStack(spacing: 6) {
                 // Filter out savings accounts - only show regular accounts
-                let regularAccounts = accounts.filter { !$0.isSavings }
+                let regularAccounts = accountManager.accounts.filter { !$0.isSavings }
                 let pinnedAccounts = regularAccounts.filter { $0.isPinned }
                 let nonPinnedAccounts = regularAccounts.filter { !$0.isPinned }
                 
@@ -456,7 +483,10 @@ struct DashboardView: View {
                 } else {
                     // Show pinned accounts
                     ForEach(pinnedAccounts) { account in
-                        NavigationLink(destination: AccountDetailsView(account: account, accounts: $accounts, transactions: $transactions)) {
+                        NavigationLink(destination: AccountDetailsView(account: account)
+                            .environmentObject(settings)
+                            .environmentObject(transactionManager)
+                            .environmentObject(accountManager)) {
                             AccountRow(
                                 account: account,
                                 isSelected: account.id == selectedAccountId,
@@ -499,7 +529,10 @@ struct DashboardView: View {
                         // Show non-pinned accounts if expanded (animated content below button)
                         if showNonPinnedAccounts {
                             ForEach(nonPinnedAccounts) { account in
-                                NavigationLink(destination: AccountDetailsView(account: account, accounts: $accounts, transactions: $transactions)) {
+                                NavigationLink(destination: AccountDetailsView(account: account)
+                                    .environmentObject(settings)
+                                    .environmentObject(transactionManager)
+                                    .environmentObject(accountManager)) {
                                     AccountRow(
                                         account: account,
                                         isSelected: account.id == selectedAccountId,
@@ -525,12 +558,10 @@ struct DashboardView: View {
             AccountFormView(
                 account: editingAccount,
                 onSave: { account in
-                    if let editingAccount = editingAccount {
-                        if let index = accounts.firstIndex(where: { $0.id == editingAccount.id }) {
-                            accounts[index] = account
-                        }
+                    if editingAccount != nil {
+                        accountManager.updateAccount(account)
                     } else {
-                        accounts.append(account)
+                        accountManager.addAccount(account)
                     }
                     showAccountForm = false
                     editingAccount = nil
@@ -629,7 +660,8 @@ struct DashboardView: View {
     
     private func startAddingTransaction(for type: TransactionType) {
         currentFormMode = .add(type)
-        draftTransaction = TransactionDraft(type: type, currency: settings.currency)
+        let firstAccountName = accountManager.accounts.first?.name ?? ""
+        draftTransaction = TransactionDraft(type: type, currency: settings.currency, accountName: firstAccountName)
         showTransactionForm = true
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showActionMenu = false
@@ -642,14 +674,12 @@ struct DashboardView: View {
         switch currentFormMode {
         case .add:
             let newTransaction = draft.toTransaction(existingId: nil)
-            transactions.insert(newTransaction, at: 0)
+            transactionManager.addTransaction(newTransaction)
             oldTransaction = nil
         case .edit(let id):
-            oldTransaction = transactions.first(where: { $0.id == id })
+            oldTransaction = transactionManager.transactions.first(where: { $0.id == id })
             let updated = draft.toTransaction(existingId: id)
-            if let index = transactions.firstIndex(where: { $0.id == id }) {
-                transactions[index] = updated
-            }
+            transactionManager.updateTransaction(updated)
         }
         
         // Update account balances using draft (which has toAccountName for transfers)
@@ -659,7 +689,7 @@ struct DashboardView: View {
     }
     
     private func deleteTransaction(_ transaction: Transaction) {
-        transactions.removeAll { $0.id == transaction.id }
+        transactionManager.deleteTransaction(transaction)
         // Revert account balance changes for deleted transaction
         updateAccountBalances(oldTransaction: transaction, newDraft: nil)
     }
@@ -683,14 +713,18 @@ struct DashboardView: View {
         
         // Revert old transaction's effect
         if let old = oldTransaction {
-            if let accountIndex = accounts.firstIndex(where: { $0.name == old.accountName }) {
-                accounts[accountIndex].balance -= balanceChange(for: old)
+            if let account = accountManager.getAccount(name: old.accountName) {
+                var updatedAccount = account
+                updatedAccount.balance -= balanceChange(for: old)
+                accountManager.updateAccount(updatedAccount)
             }
             
             // Handle transfers - revert from both accounts
             if old.type == .transfer, let toAccountName = old.toAccountName,
-               let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-                accounts[toAccountIndex].balance += old.amount // Add back to 'to' account
+               let toAccount = accountManager.getAccount(name: toAccountName) {
+                var updatedAccount = toAccount
+                updatedAccount.balance += old.amount // Add back to 'to' account
+                accountManager.updateAccount(updatedAccount)
             }
         }
         
@@ -700,16 +734,22 @@ struct DashboardView: View {
             
             if draft.type == .transfer, let toAccountName = draft.toAccountName {
                 // Transfer: subtract from fromAccount, add to toAccount
-                if let fromAccountIndex = accounts.firstIndex(where: { $0.name == draft.accountName }) {
-                    accounts[fromAccountIndex].balance -= draft.amount
+                if let fromAccount = accountManager.getAccount(name: draft.accountName) {
+                    var updatedAccount = fromAccount
+                    updatedAccount.balance -= draft.amount
+                    accountManager.updateAccount(updatedAccount)
                 }
-                if let toAccountIndex = accounts.firstIndex(where: { $0.name == toAccountName }) {
-                    accounts[toAccountIndex].balance += draft.amount
+                if let toAccount = accountManager.getAccount(name: toAccountName) {
+                    var updatedAccount = toAccount
+                    updatedAccount.balance += draft.amount
+                    accountManager.updateAccount(updatedAccount)
                 }
             } else if draft.type != .debt {
                 // Income or Expense: update the account balance
-                if let accountIndex = accounts.firstIndex(where: { $0.name == draft.accountName }) {
-                    accounts[accountIndex].balance += balanceChange
+                if let account = accountManager.getAccount(name: draft.accountName) {
+                    var updatedAccount = account
+                    updatedAccount.balance += balanceChange
+                    accountManager.updateAccount(updatedAccount)
                 }
             }
             // Debt transactions don't affect account balance
@@ -717,28 +757,29 @@ struct DashboardView: View {
     }
     
     private func deleteAccount(_ accountId: UUID) {
-        guard let account = accounts.first(where: { $0.id == accountId }) else { return }
+        guard let account = accountManager.getAccount(id: accountId) else { return }
         
         // Delete all transactions associated with this account
-        transactions.removeAll { transaction in
+        transactionManager.transactions.removeAll { transaction in
             transaction.accountName == account.name || transaction.toAccountName == account.name
         }
         
         // Delete the account
-        accounts.removeAll { $0.id == accountId }
+        accountManager.deleteAccount(accountId)
         
         // Reset selected account if it was deleted
         if selectedAccountId == accountId {
-            selectedAccountId = accounts.first?.id ?? UUID()
+            selectedAccountId = accountManager.accounts.first?.id ?? UUID()
         }
     }
     
     private func binding(for account: Account) -> Binding<Bool> {
         Binding {
-            accounts.first { $0.id == account.id }?.includedInTotal ?? true
+            accountManager.accounts.first { $0.id == account.id }?.includedInTotal ?? true
         } set: { newValue in
-            guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
-            accounts[index].includedInTotal = newValue
+            guard var updatedAccount = accountManager.getAccount(id: account.id) else { return }
+            updatedAccount.includedInTotal = newValue
+            accountManager.updateAccount(updatedAccount)
         }
     }
 }

@@ -10,7 +10,7 @@ import Charts
 
 struct SpendingProjectionChart: View {
     @EnvironmentObject var settings: AppSettings
-    @ObservedObject private var subManager = SubscriptionManager.shared
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     
     let transactions: [Transaction]
     
@@ -100,7 +100,7 @@ struct SpendingProjectionChart: View {
         let daysElapsed = max(1, calendar.dateComponents([.day], from: period.start, to: today).day ?? 1)
         
         // Get past planned payments that were already paid
-        let pastPlannedPayments = subManager.subscriptions.filter { subscription in
+        let pastPlannedPayments = subscriptionManager.subscriptions.filter { subscription in
             !subscription.isIncome &&
             subscription.date >= period.start &&
             subscription.date <= today
@@ -112,7 +112,7 @@ struct SpendingProjectionChart: View {
         let averageDailyBurn = variableSpending / Double(daysElapsed)
         
         // Get future planned payments (subscriptions/loans) in this period
-        let futurePlannedPayments = subManager.subscriptions.filter { subscription in
+        let futurePlannedPayments = subscriptionManager.subscriptions.filter { subscription in
             !subscription.isIncome &&
             subscription.status == .upcoming &&
             subscription.date > today &&
@@ -347,7 +347,6 @@ struct SpendingProjectionChart: View {
     
     private var chartView: some View {
         let data = sortedChartData
-        let calendar = Calendar.current
         let today = self.today
         let previousData = data.filter { $0.previousMonth != nil }
         
