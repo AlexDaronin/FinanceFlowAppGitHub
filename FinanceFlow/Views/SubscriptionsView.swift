@@ -24,44 +24,155 @@ enum SubscriptionMode: String, CaseIterable {
 struct SubscriptionsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var manager: SubscriptionManager
+    @EnvironmentObject var accountManager: AccountManager
     @State private var showAddSheet = false
     @State private var selectedSubscription: PlannedPayment?
     @State private var selectedMode: SubscriptionMode = .expenses
-    @State private var selectedDate: Date? = nil
+    @State private var expandedMonths: Set<String> = [] // Track which months are expanded
+    @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
+    @State private var plannedPaymentToDelete: PlannedPayment? // For delete confirmation
+    @State private var showDeleteScheduledAlert = false
     
-    // Filtered subscriptions based on selected mode and date
+    // Filtered subscriptions based on selected mode
     private var filteredSubscriptions: [PlannedPayment] {
         let calendar = Calendar.current
-        var filtered = manager.subscriptions(isIncome: selectedMode == .income)
+        let subscriptions = manager.subscriptions(isIncome: selectedMode == .income)
         
-        // If a date is selected, filter by that specific date
-        if let selectedDate = selectedDate {
-            let selectedDay = calendar.startOfDay(for: selectedDate)
-            filtered = filtered.filter { subscription in
-                let subDay = calendar.startOfDay(for: subscription.date)
-                return subDay == selectedDay
+        // Filter out PlannedPayments that have been terminated via "Delete All Future"
+        // When endDate is set to (selectedDate - 1 day), we exclude payments where payment.date >= selectedDate
+        // This means we exclude payments where payment.date > endDate
+        return subscriptions.filter { payment in
+            guard let endDate = payment.endDate else {
+                // No endDate set, include the payment
+                return true
             }
+            // Exclude if payment's date is > endDate (meaning it was deleted via "Delete All Future")
+            // Since endDate = selectedDate - 1 day, this excludes date >= selectedDate
+            let paymentDate = calendar.startOfDay(for: payment.date)
+            let endDateStart = calendar.startOfDay(for: endDate)
+            return paymentDate <= endDateStart
         }
-        
-        return filtered
     }
     
-    // Group subscriptions by date (matching TransactionsView style)
-    private var groupedSubscriptions: [(date: Date, subscriptions: [PlannedPayment])] {
+    // Generate scheduled occurrences for all repeating subscriptions (next 12 months)
+    private var scheduledOccurrences: [Transaction] {
         let calendar = Calendar.current
-        let grouped = Dictionary(grouping: filteredSubscriptions) { subscription in
-            calendar.startOfDay(for: subscription.date)
+        let today = Date()
+        let endDate = calendar.date(byAdding: .year, value: 1, to: today) ?? today
+        
+        var allOccurrences: [Transaction] = []
+        
+        for payment in filteredSubscriptions {
+            let occurrences = generateScheduledOccurrences(from: payment, endDate: endDate)
+            allOccurrences.append(contentsOf: occurrences)
         }
-        return grouped
-            .map { (date: $0.key, subscriptions: $0.value.sorted { $0.date < $1.date }) }
+        
+        return allOccurrences
+            .filter { $0.date > today }
             .sorted { $0.date < $1.date }
     }
     
-    // Helper function to format date for empty state
-    private func formatDateForEmptyState(_ date: Date) -> String {
+    // Group subscriptions and scheduled occurrences by month
+    private var groupedByMonth: [(monthKey: String, monthStart: Date, items: [Any])] {
+        let calendar = Calendar.current
+        var allItems: [(date: Date, item: Any)] = []
+        
+        // Add original PlannedPayments (non-repeating or first occurrence)
+        // Note: filteredSubscriptions already excludes payments with date >= endDate
+        for subscription in filteredSubscriptions {
+            let date = calendar.startOfDay(for: subscription.date)
+            let today = calendar.startOfDay(for: Date())
+            
+            // For repeating payments, only show the original if it's the first occurrence
+            // and hasn't been terminated (already filtered by filteredSubscriptions)
+            // For non-repeating payments, always show them
+            if !subscription.isRepeating || date <= today {
+                allItems.append((date: date, item: subscription))
+            }
+        }
+        
+        // Add scheduled occurrences (future transactions from repeating payments)
+        for transaction in scheduledOccurrences {
+            let date = calendar.startOfDay(for: transaction.date)
+            allItems.append((date: date, item: transaction))
+        }
+        
+        // Group by month
+        let grouped = Dictionary(grouping: allItems) { item in
+            let date = item.date
+            let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM"
+            return formatter.string(from: monthStart)
+        }
+        
+        return grouped
+            .map { (monthKey: $0.key, monthStart: calendar.date(from: calendar.dateComponents([.year, .month], from: $0.value.first?.date ?? Date())) ?? Date(), items: $0.value.map { $0.item }.sorted { item1, item2 in
+                let date1: Date
+                let date2: Date
+                if let t1 = item1 as? Transaction {
+                    date1 = t1.date
+                } else if let p1 = item1 as? PlannedPayment {
+                    date1 = p1.date
+                } else {
+                    date1 = Date()
+                }
+                if let t2 = item2 as? Transaction {
+                    date2 = t2.date
+                } else if let p2 = item2 as? PlannedPayment {
+                    date2 = p2.date
+                } else {
+                    date2 = Date()
+                }
+                return date1 < date2
+            }) }
+            .sorted { $0.monthStart < $1.monthStart }
+    }
+    
+    // Initialize expanded months (current month and next month)
+    private func initializeExpandedMonths() {
+        let calendar = Calendar.current
+        let today = Date()
+        let currentMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? today
+        
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMM d"
-        return formatter.string(from: date)
+        formatter.dateFormat = "yyyy-MM"
+        
+        expandedMonths.insert(formatter.string(from: currentMonth))
+        expandedMonths.insert(formatter.string(from: nextMonth))
+    }
+    
+    // Toggle month expansion
+    private func toggleMonth(_ monthKey: String) {
+        if expandedMonths.contains(monthKey) {
+            expandedMonths.remove(monthKey)
+        } else {
+            expandedMonths.insert(monthKey)
+        }
+    }
+    
+    // Check if month is expanded
+    private func isMonthExpanded(_ monthKey: String) -> Bool {
+        expandedMonths.contains(monthKey)
+    }
+    
+    // Format month header
+    private func monthHeader(for monthStart: Date) -> String {
+        let calendar = Calendar.current
+        let today = Date()
+        let currentMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? today
+        
+        if calendar.isDate(monthStart, equalTo: currentMonth, toGranularity: .month) {
+            return String(localized: "This Month", comment: "This month header")
+        } else if calendar.isDate(monthStart, equalTo: nextMonth, toGranularity: .month) {
+            return String(localized: "Next Month", comment: "Next month header")
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMMM yyyy"
+            return formatter.string(from: monthStart)
+        }
     }
     
     // Helper function to format date header (matching TransactionsView)
@@ -116,13 +227,6 @@ struct SubscriptionsView: View {
                         .padding(.horizontal)
                         .padding(.top, 8)
                     
-                    // Premium Expandable Calendar Card
-                    ExpandableCalendarView(
-                        subscriptions: manager.subscriptions,
-                        selectedDate: $selectedDate
-                    )
-                    .padding(.horizontal)
-                    
                     // Monthly Burn Rate Summary Card
                     VStack(alignment: .leading, spacing: 8) {
                             Text(selectedMode == .expenses ? String(localized: "Monthly Burn Rate", comment: "Monthly burn rate label") : String(localized: "Monthly Projected Income", comment: "Monthly projected income label"))
@@ -145,53 +249,115 @@ struct SubscriptionsView: View {
                     // Item 3: Subscriptions List (Grouped by Date - matching TransactionsView)
                     if filteredSubscriptions.isEmpty {
                         VStack(spacing: 16) {
-                            Image(systemName: selectedDate == nil ? "tray" : "calendar.badge.exclamationmark")
+                            Image(systemName: "tray")
                                 .font(.system(size: 40))
                                 .foregroundStyle(.secondary.opacity(0.5))
                             
-                            if let date = selectedDate {
-                                VStack(spacing: 4) {
-                                    Text("No plans for", comment: "No plans for date")
-                                        .font(.body)
-                                        .foregroundStyle(.secondary)
-                                    Text(formatDateForEmptyState(date))
-                                        .font(.body.weight(.semibold))
-                                        .foregroundStyle(.primary)
-                                }
-                            } else {
-                                Text(selectedMode == .expenses ? String(localized: "No active expenses", comment: "No active expenses") : String(localized: "No active income", comment: "No active income"))
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text(selectedMode == .expenses ? String(localized: "No active expenses", comment: "No active expenses") : String(localized: "No active income", comment: "No active income"))
+                                .font(.body)
+                                .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                     } else {
-                        ForEach(Array(groupedSubscriptions.enumerated()), id: \.element.date) { index, dayGroup in
+                        ForEach(Array(groupedByMonth.enumerated()), id: \.element.monthKey) { index, monthGroup in
                             VStack(alignment: .leading, spacing: 12) {
-                                // Day Header (matching TransactionsView)
-                                dayHeader(for: dayGroup.date)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, index == 0 ? 8 : 16)
-                                    .padding(.bottom, 8)
-                                
-                                // Subscriptions for this day (using exact TransactionRow design)
-                                ForEach(dayGroup.subscriptions) { subscription in
-                                    Button {
-                                        selectedSubscription = subscription
-                                    } label: {
-                                        SubscriptionRow(subscription: subscription)
+                                // Month Header with Expand/Collapse
+                                Button {
+                                    toggleMonth(monthGroup.monthKey)
+                                } label: {
+                                    HStack {
+                                        Text(monthHeader(for: monthGroup.monthStart))
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Image(systemName: isMonthExpanded(monthGroup.monthKey) ? "chevron.down" : "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
-                                    .buttonStyle(.plain)
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                        Button(role: .destructive) {
-                                            manager.deleteSubscription(subscription)
-                                        } label: {
-                                            Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 20)
+                                .padding(.top, index == 0 ? 8 : 16)
+                                .padding(.bottom, 8)
+                                
+                                // Items for this month (only show if expanded)
+                                if isMonthExpanded(monthGroup.monthKey) {
+                                    // Group items by day within the month
+                                    let calendar = Calendar.current
+                                    let dayGrouped = Dictionary(grouping: monthGroup.items) { item -> Date in
+                                        let date: Date
+                                        if let t = item as? Transaction {
+                                            date = t.date
+                                        } else if let p = item as? PlannedPayment {
+                                            date = p.date
+                                        } else {
+                                            date = Date()
+                                        }
+                                        return calendar.startOfDay(for: date)
+                                    }
+                                    
+                                    let sortedDays = dayGrouped.keys.sorted()
+                                    
+                                    ForEach(Array(sortedDays.enumerated()), id: \.element) { dayIndex, day in
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            // Day Header
+                                            dayHeader(for: day)
+                                                .padding(.horizontal, 20)
+                                                .padding(.top, dayIndex == 0 ? 0 : 12)
+                                                .padding(.bottom, 4)
+                                            
+                                            // Items for this day
+                                            ForEach(Array(dayGrouped[day]?.enumerated() ?? [].enumerated()), id: \.offset) { itemIndex, item in
+                                                if let transaction = item as? Transaction {
+                                                    // Scheduled occurrence - editable (opens PlannedPayment editor) and deletable
+                                                    Button {
+                                                        // Find and open the source PlannedPayment for editing
+                                                        if let sourcePayment = findSourcePlannedPayment(for: transaction) {
+                                                            selectedSubscription = sourcePayment
+                                                        }
+                                                    } label: {
+                                                        TransactionRow(transaction: transaction)
+                                                            .opacity(0.8) // Slightly dimmed to indicate scheduled
+                                                    }
+                                                    .buttonStyle(.plain)
+                                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                            Button(role: .destructive) {
+                                                // Show confirmation alert for scheduled transaction deletion
+                                                scheduledTransactionToDelete = transaction
+                                                showDeleteScheduledAlert = true
+                                            } label: {
+                                                Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
+                                            }
+                                        }
+                                                    .padding(.bottom, 8)
+                                                } else if let subscription = item as? PlannedPayment {
+                                                    // Original PlannedPayment
+                                                    Button {
+                                                        selectedSubscription = subscription
+                                                    } label: {
+                                                        SubscriptionRow(subscription: subscription)
+                                                    }
+                                                    .buttonStyle(.plain)
+                                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                                        Button(role: .destructive) {
+                                                            // Show confirmation modal for repeating payments, direct delete for non-repeating
+                                                            if subscription.isRepeating {
+                                                                plannedPaymentToDelete = subscription
+                                                                showDeleteScheduledAlert = true
+                                                            } else {
+                                                                manager.deleteSubscription(subscription)
+                                                            }
+                                                        } label: {
+                                                            Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
+                                                        }
+                                                    }
+                                                    .id(subscription.id)
+                                                    .padding(.bottom, 8)
+                                                }
+                                            }
                                         }
                                     }
-                                    .id(subscription.id)
-                                    .padding(.bottom, 8)
                                 }
                             }
                         }
@@ -200,6 +366,10 @@ struct SubscriptionsView: View {
                     .padding(.bottom, 100) // Space for FAB button
                 }
                 .onAppear {
+                    // Initialize expanded months (current and next month)
+                    if expandedMonths.isEmpty {
+                        initializeExpandedMonths()
+                    }
                     // Reset scroll position when view appears
                     proxy.scrollTo("top", anchor: .top)
                 }
@@ -230,6 +400,7 @@ struct SubscriptionsView: View {
         .sheet(isPresented: $showAddSheet) {
             CustomSubscriptionFormView(
                 paymentType: .subscription,
+                existingPayment: nil,
                 initialIsIncome: selectedMode == .income,
                 onSave: { newSubscription in
                     manager.addSubscription(newSubscription)
@@ -240,327 +411,453 @@ struct SubscriptionsView: View {
                 }
             )
             .environmentObject(settings)
+            .environmentObject(accountManager)
         }
         .sheet(item: $selectedSubscription) { subscription in
             CustomSubscriptionFormView(
                 paymentType: .subscription,
                 existingPayment: subscription,
+                initialIsIncome: subscription.isIncome,
                 onSave: { updatedSubscription in
                     manager.updateSubscription(updatedSubscription)
                     selectedSubscription = nil
                 },
                 onCancel: {
                     selectedSubscription = nil
+                },
+                onDelete: { paymentToDelete in
+                    // If it's a repeating payment, show confirmation modal
+                    if paymentToDelete.isRepeating {
+                        plannedPaymentToDelete = paymentToDelete
+                        showDeleteScheduledAlert = true
+                        selectedSubscription = nil
+                    } else {
+                        // Non-repeating, delete directly
+                        manager.deleteSubscription(paymentToDelete)
+                        selectedSubscription = nil
+                    }
                 }
             )
             .environmentObject(settings)
+            .environmentObject(accountManager)
         }
-    }
-}
-
-// MARK: - ExpandableCalendarView
-
-struct ExpandableCalendarView: View {
-    let subscriptions: [PlannedPayment]
-    @Binding var selectedDate: Date?
-    @State private var isExpanded: Bool = false
-    @State private var currentMonth: Date = Date()
-    
-    private let calendar = Calendar.current
-    
-    // Get subscriptions for a specific date
-    private func subscriptions(for date: Date) -> [PlannedPayment] {
-        let dayStart = calendar.startOfDay(for: date)
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
-        return subscriptions.filter { subscription in
-            let subDate = calendar.startOfDay(for: subscription.date)
-            return subDate >= dayStart && subDate < dayEnd
-        }
-    }
-    
-    // Check if date has income
-    private func hasIncome(for date: Date) -> Bool {
-        subscriptions(for: date).contains { $0.isIncome }
-    }
-    
-    // Check if date has expense
-    private func hasExpense(for date: Date) -> Bool {
-        subscriptions(for: date).contains { !$0.isIncome }
-    }
-    
-    // Get current week dates
-    private var currentWeekDates: [Date] {
-        let today = Date()
-        let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)) ?? today
-        return (0..<7).compactMap { dayOffset in
-            calendar.date(byAdding: .day, value: dayOffset, to: startOfWeek)
+        .alert(String(localized: "Delete scheduled transaction?", comment: "Delete scheduled transaction alert title"), isPresented: $showDeleteScheduledAlert) {
+            Button(String(localized: "Delete Only This", comment: "Delete only this occurrence")) {
+                if let transaction = scheduledTransactionToDelete {
+                    handleDeleteOnlyThisScheduled(transaction)
+                } else if let payment = plannedPaymentToDelete {
+                    handleDeleteOnlyThisPlannedPayment(payment)
+                }
+            }
+            
+            // Only show "Delete All Future" if there are future occurrences
+            if let transaction = scheduledTransactionToDelete, hasFutureOccurrences(after: transaction) {
+                Button(String(localized: "Delete All Future", comment: "Delete all future occurrences")) {
+                    handleDeleteAllFuture(transaction)
+                }
+            } else if let payment = plannedPaymentToDelete, hasFutureOccurrencesForPayment(payment) {
+                Button(String(localized: "Delete All Future", comment: "Delete all future occurrences")) {
+                    handleDeleteAllFutureForPayment(payment)
+                }
+            }
+            
+            Button(String(localized: "Cancel", comment: "Cancel button"), role: .cancel) {
+                scheduledTransactionToDelete = nil
+                plannedPaymentToDelete = nil
+            }
+        } message: {
+            Text(String(localized: "Delete only this occurrence or delete all future repeats?", comment: "Delete scheduled transaction confirmation message"))
         }
     }
     
-    // Get all dates in current month
-    private var monthDates: [Date?] {
-        guard let monthInterval = calendar.dateInterval(of: .month, for: currentMonth),
-              let firstDay = calendar.date(from: calendar.dateComponents([.year, .month], from: currentMonth)) else {
+    // MARK: - Delete Handlers
+    
+    // Handle delete all future scheduled payments (terminate chain from this date forward)
+    private func handleDeleteAllFuture(_ transaction: Transaction) {
+        if let sourcePayment = findSourcePlannedPayment(for: transaction) {
+            // Set endDate to the day before the selected occurrence date
+            // This stops generation from this occurrence forward
+            let calendar = Calendar.current
+            let transactionDate = calendar.startOfDay(for: transaction.date)
+            if let endDate = calendar.date(byAdding: .day, value: -1, to: transactionDate) {
+                manager.setEndDate(for: sourcePayment, endDate: endDate)
+            }
+        }
+        scheduledTransactionToDelete = nil
+        plannedPaymentToDelete = nil
+    }
+    
+    // Handle delete all future for a PlannedPayment directly (terminate chain from payment's date forward)
+    private func handleDeleteAllFutureForPayment(_ payment: PlannedPayment) {
+        // Set endDate to the day before the payment's start date
+        // This stops generation from this payment's date forward
+        // If payment date is in the past, set endDate to yesterday to preserve past transactions
+        let calendar = Calendar.current
+        let paymentDate = calendar.startOfDay(for: payment.date)
+        let today = calendar.startOfDay(for: Date())
+        
+        let endDate: Date
+        if paymentDate >= today {
+            // Payment date is in the future, terminate from that date
+            endDate = calendar.date(byAdding: .day, value: -1, to: paymentDate) ?? paymentDate
+        } else {
+            // Payment date is in the past, terminate from today (preserve past transactions)
+            endDate = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        }
+        
+        manager.setEndDate(for: payment, endDate: endDate)
+        scheduledTransactionToDelete = nil
+        plannedPaymentToDelete = nil
+    }
+    
+    // Handle delete only this occurrence
+    private func handleDeleteOnlyThisScheduled(_ transaction: Transaction) {
+        if let sourcePayment = findSourcePlannedPayment(for: transaction) {
+            // Add this date to skipped dates
+            let calendar = Calendar.current
+            let transactionDate = calendar.startOfDay(for: transaction.date)
+            manager.skipDate(for: sourcePayment, date: transactionDate)
+        }
+        scheduledTransactionToDelete = nil
+        plannedPaymentToDelete = nil
+    }
+    
+    // Handle delete only this occurrence for a PlannedPayment directly
+    private func handleDeleteOnlyThisPlannedPayment(_ payment: PlannedPayment) {
+        // Skip the payment's start date (the first occurrence)
+        let calendar = Calendar.current
+        let paymentDate = calendar.startOfDay(for: payment.date)
+        manager.skipDate(for: payment, date: paymentDate)
+        scheduledTransactionToDelete = nil
+        plannedPaymentToDelete = nil
+    }
+    
+    // Check if there are future occurrences after the selected transaction
+    private func hasFutureOccurrences(after transaction: Transaction) -> Bool {
+        guard let sourcePayment = findSourcePlannedPayment(for: transaction) else {
+            return false
+        }
+        
+        let calendar = Calendar.current
+        let transactionDate = calendar.startOfDay(for: transaction.date)
+        let today = calendar.startOfDay(for: Date())
+        let endDate = calendar.date(byAdding: .year, value: 1, to: today) ?? today
+        
+        // Generate occurrences and check if any are after the transaction date
+        let occurrences = generateScheduledOccurrences(from: sourcePayment, endDate: endDate)
+        return occurrences.contains { occurrence in
+            let occurrenceDate = calendar.startOfDay(for: occurrence.date)
+            return occurrenceDate > transactionDate
+        }
+    }
+    
+    // Check if there are future occurrences for a PlannedPayment
+    private func hasFutureOccurrencesForPayment(_ payment: PlannedPayment) -> Bool {
+        guard payment.isRepeating else {
+            return false
+        }
+        
+        let calendar = Calendar.current
+        let paymentDate = calendar.startOfDay(for: payment.date)
+        let today = calendar.startOfDay(for: Date())
+        let endDate = calendar.date(byAdding: .year, value: 1, to: today) ?? today
+        
+        // Generate occurrences and check if any are after the payment's start date
+        let occurrences = generateScheduledOccurrences(from: payment, endDate: endDate)
+        return occurrences.contains { occurrence in
+            let occurrenceDate = calendar.startOfDay(for: occurrence.date)
+            return occurrenceDate > paymentDate
+        }
+    }
+    
+    // MARK: - Helper Functions for Scheduled Occurrences
+    
+    // Generate scheduled occurrences for a single PlannedPayment
+    private func generateScheduledOccurrences(
+        from payment: PlannedPayment,
+        endDate: Date
+    ) -> [Transaction] {
+        guard payment.isRepeating,
+              let frequencyString = payment.repetitionFrequency,
+              let frequency = RepetitionFrequency(rawValue: frequencyString),
+              let interval = payment.repetitionInterval else {
+            // Not repeating, return empty
             return []
         }
         
-        let firstWeekday = calendar.component(.weekday, from: firstDay)
-        let daysToSubtract = (firstWeekday - calendar.firstWeekday + 7) % 7
+        var occurrences: [Transaction] = []
+        let calendar = Calendar.current
+        let today = Date()
+        let startDate = payment.date
+        let weekdays = payment.selectedWeekdays.map { Set($0) } ?? []
         
-        var dates: [Date?] = []
+        // Get skipped dates and end date
+        let skippedDates = payment.skippedDates ?? []
+        let paymentEndDate = payment.endDate
         
-        // Add padding days (days from previous month)
-        for i in 0..<daysToSubtract {
-            if let date = calendar.date(byAdding: .day, value: -daysToSubtract + i, to: firstDay) {
-                dates.append(date)
-            } else {
-                dates.append(nil)
-            }
+        // Determine the actual end date (use payment's endDate if set, otherwise use the provided endDate)
+        let actualEndDate = paymentEndDate ?? endDate
+        
+        // ISSUE 1 FIX: Always include the first occurrence on the selected date (startDate)
+        // Check if startDate should be included
+        let startDateStart = calendar.startOfDay(for: startDate)
+        let todayStart = calendar.startOfDay(for: today)
+        let actualEndDateStart = calendar.startOfDay(for: actualEndDate)
+        
+        // Check if startDate is skipped
+        let isStartDateSkipped = skippedDates.contains { skippedDate in
+            calendar.isDate(startDateStart, inSameDayAs: skippedDate)
         }
         
-        // Add days of current month
-        var currentDate = firstDay
-        while currentDate < monthInterval.end {
-            dates.append(currentDate)
-            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
-        }
-        
-        // Fill remaining days to complete grid (6 rows x 7 days = 42)
-        while dates.count < 42 {
-            dates.append(nil)
-        }
-        
-        return dates
-    }
-    
-    var body: some View {
-        // Premium Widget Container - wraps all calendar content
-        VStack(spacing: 0) {
-            // Header with month/year and chevron toggle button
-            HStack {
-                if isExpanded {
-                    // Month/Year display
-                    Text(currentMonth.formatted(.dateTime.month(.wide).year()))
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    
-                    Spacer()
-                    
-                    // Previous/Next month buttons
-                    HStack(spacing: 16) {
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
-                            }
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                        }
-                        
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
-                            }
-                        } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                } else {
-                    // Week view header
-                    Text("This Week", comment: "This week header")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    
-                    Spacer()
-                }
-                
-                // Chevron Toggle Button
-                Button {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                    }
-                } label: {
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Color.customCardBackground)
-                        .clipShape(Circle())
-                }
-            }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 12)
-            
-            if isExpanded {
-                // Full Month Grid
-                VStack(spacing: 16) {
-                    // Weekday headers
-                    HStack(spacing: 0) {
-                        ForEach(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], id: \.self) { day in
-                            Text(day)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    
-                    // Calendar grid
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 10) {
-                        ForEach(Array(monthDates.enumerated()), id: \.offset) { index, date in
-                            if let date = date {
-                                CalendarDayCell(
-                                    date: date,
-                                    dayNumber: calendar.component(.day, from: date),
-                                    hasIncome: hasIncome(for: date),
-                                    hasExpense: hasExpense(for: date),
-                                    isSelected: selectedDate != nil && calendar.isDate(date, inSameDayAs: selectedDate!),
-                                    isToday: calendar.isDateInToday(date),
-                                    isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month)
-                                ) {
-                                    // Toggle selection: tap selected date to deselect
-                                    if let currentSelected = selectedDate, calendar.isDate(date, inSameDayAs: currentSelected) {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                            selectedDate = nil
-                                        }
-                                    } else {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                            selectedDate = date
-                                        }
-                                        // Update current month if selecting a date from a different month
-                                        let selectedMonth = calendar.dateComponents([.year, .month], from: date)
-                                        let currentMonthComponents = calendar.dateComponents([.year, .month], from: currentMonth)
-                                        if selectedMonth != currentMonthComponents {
-                                            withAnimation {
-                                                currentMonth = calendar.date(from: selectedMonth) ?? currentMonth
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Empty cell
-                                Color.clear
-                                    .frame(height: 56)
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 8)
-            } else {
-                // Single Week Row
-                VStack(spacing: 8) {
-                    // Weekday headers
-                    HStack(spacing: 0) {
-                        ForEach(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], id: \.self) { day in
-                            Text(day)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    
-                    // Week dates
-                    HStack(spacing: 14) {
-                        ForEach(currentWeekDates, id: \.self) { date in
-                            CalendarDayCell(
-                                date: date,
-                                dayNumber: calendar.component(.day, from: date),
-                                hasIncome: hasIncome(for: date),
-                                hasExpense: hasExpense(for: date),
-                                isSelected: selectedDate != nil && calendar.isDate(date, inSameDayAs: selectedDate!),
-                                isToday: calendar.isDateInToday(date),
-                                isCurrentMonth: true
-                            ) {
-                                // Toggle selection: tap selected date to deselect
-                                if let currentSelected = selectedDate, calendar.isDate(date, inSameDayAs: currentSelected) {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        selectedDate = nil
-                                    }
-                                } else {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        selectedDate = date
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-        }
-        .padding(16)
-        .background(Color.customCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isExpanded)
-    }
-}
-
-// MARK: - CalendarDayCell
-
-struct CalendarDayCell: View {
-    let date: Date
-    let dayNumber: Int
-    let hasIncome: Bool
-    let hasExpense: Bool
-    let isSelected: Bool
-    let isToday: Bool
-    let isCurrentMonth: Bool
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 6) {
-                // Day number with cleaner font
-                Text("\(dayNumber)")
-                    .font(.system(size: 16, weight: isSelected ? .semibold : (isToday ? .medium : .regular)))
-                    .foregroundStyle(
-                        isSelected ? .white :
-                        isToday ? .blue :
-                        isCurrentMonth ? .primary : .secondary.opacity(0.4)
-                    )
-                
-                // Indicator dots (neatly positioned below number)
-                HStack(spacing: 4) {
-                    if hasIncome {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 5, height: 5)
-                    }
-                    if hasExpense {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 5, height: 5)
-                    }
-                }
-                .frame(height: 5)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(
-                Group {
-                    if isSelected {
-                        // Soft, rounded selection highlight (squircle for iOS feel)
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.accentColor)
-                            .frame(width: 40, height: 40)
-                    } else if isToday {
-                        // Subtle today indicator
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.blue.opacity(0.12))
-                            .frame(width: 40, height: 40)
-                    } else {
-                        Color.clear
-                    }
-                }
+        // Include first occurrence if:
+        // 1. It's in the future (or today)
+        // 2. It's not skipped
+        // 3. It's within the endDate range
+        if startDateStart >= todayStart && !isStartDateSkipped && startDateStart <= actualEndDateStart {
+            let transaction = Transaction(
+                id: UUID(),
+                title: payment.title,
+                category: payment.category ?? "General",
+                amount: payment.amount,
+                date: startDate,
+                type: payment.isIncome ? .income : .expense,
+                accountName: payment.accountName,
+                toAccountName: nil,
+                currency: settings.currency,
+                sourcePlannedPaymentId: payment.id, // ISSUE 2 FIX: Store source payment ID
+                occurrenceDate: startDate // ISSUE 2 FIX: Store occurrence date
             )
+            occurrences.append(transaction)
         }
-        .buttonStyle(.plain)
+        
+        // Now generate subsequent occurrences: startDate + interval, startDate + 2×interval, etc.
+        // Start from the first occurrence after startDate
+        var currentDate = calculateScheduledNextDate(
+            from: startDate,
+            frequency: frequency,
+            interval: interval,
+            weekdays: weekdays
+        )
+        
+        var iterationCount = 0
+        let maxIterations = 1000
+        
+        // Generate occurrences until we reach end date
+        // Note: actualEndDate is set to (selectedDate - 1 day) when "Delete All Future" is used
+        // This ensures occurrences with date >= selectedDate are excluded
+        while currentDate <= actualEndDate && iterationCount < maxIterations {
+            iterationCount += 1
+            
+            // Check if this date is skipped
+            let isSkipped = skippedDates.contains { skippedDate in
+                calendar.isDate(currentDate, inSameDayAs: skippedDate)
+            }
+            
+            // Only include occurrences that are in the future and not skipped
+            // Also ensure currentDate <= actualEndDate (which excludes date >= selectedDate when endDate is set)
+            if currentDate > today && !isSkipped && currentDate <= actualEndDate {
+                // Create a transaction for this occurrence
+                let transaction = Transaction(
+                    id: UUID(),
+                    title: payment.title,
+                    category: payment.category ?? "General",
+                    amount: payment.amount,
+                    date: currentDate,
+                    type: payment.isIncome ? .income : .expense,
+                    accountName: payment.accountName,
+                    toAccountName: nil,
+                    currency: settings.currency,
+                    sourcePlannedPaymentId: payment.id, // ISSUE 2 FIX: Store source payment ID
+                    occurrenceDate: currentDate // ISSUE 2 FIX: Store occurrence date
+                )
+                occurrences.append(transaction)
+            }
+            
+            // Calculate next date
+            let nextDate = calculateScheduledNextDate(
+                from: currentDate,
+                frequency: frequency,
+                interval: interval,
+                weekdays: weekdays
+            )
+            
+            // Stop if next date would exceed endDate or if we can't progress
+            if nextDate <= currentDate || nextDate > actualEndDate {
+                break
+            }
+            
+            currentDate = nextDate
+        }
+        
+        return occurrences
+    }
+    
+    // Calculate next scheduled date
+    private func calculateScheduledNextDate(
+        from startDate: Date,
+        frequency: RepetitionFrequency,
+        interval: Int,
+        weekdays: Set<Int>
+    ) -> Date {
+        let calendar = Calendar.current
+        let today = Date()
+        
+        switch frequency {
+        case .day:
+            var nextDate = calendar.date(byAdding: .day, value: interval, to: startDate) ?? startDate
+            if nextDate <= today {
+                nextDate = calendar.date(byAdding: .day, value: interval, to: nextDate) ?? nextDate
+            }
+            return nextDate
+            
+        case .week:
+            if !weekdays.isEmpty {
+                var checkDate = calendar.date(byAdding: .day, value: 1, to: startDate) ?? startDate
+                let maxDaysToCheck = 14
+                var daysChecked = 0
+                
+                while daysChecked < maxDaysToCheck {
+                    let checkWeekday = calendar.component(.weekday, from: checkDate)
+                    let adjustedCheckWeekday = checkWeekday == 1 ? 7 : checkWeekday - 1
+                    
+                    if weekdays.contains(adjustedCheckWeekday) {
+                        var resultDate = checkDate
+                        if interval > 1 {
+                            resultDate = calendar.date(byAdding: .weekOfYear, value: interval - 1, to: checkDate) ?? checkDate
+                        }
+                        if resultDate <= today {
+                            resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: resultDate) ?? resultDate
+                        }
+                        return resultDate
+                    }
+                    
+                    checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? checkDate
+                    daysChecked += 1
+                }
+                
+                var resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+                if resultDate <= today {
+                    resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: resultDate) ?? resultDate
+                }
+                return resultDate
+            } else {
+                var resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+                if resultDate <= today {
+                    resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: resultDate) ?? resultDate
+                }
+                return resultDate
+            }
+            
+        case .month:
+            var nextDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
+            if nextDate <= today {
+                nextDate = calendar.date(byAdding: .month, value: interval, to: nextDate) ?? nextDate
+            }
+            return nextDate
+            
+        case .year:
+            var nextDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
+            if nextDate <= today {
+                nextDate = calendar.date(byAdding: .year, value: interval, to: nextDate) ?? nextDate
+            }
+            return nextDate
+        }
+    }
+    
+    // Find the source PlannedPayment for a scheduled transaction
+    // ISSUE 2 FIX: Use sourcePlannedPaymentId for direct, reliable lookup
+    private func findSourcePlannedPayment(for transaction: Transaction) -> PlannedPayment? {
+        // First, try direct lookup using sourcePlannedPaymentId (most reliable)
+        if let sourceId = transaction.sourcePlannedPaymentId {
+            return manager.subscriptions.first { $0.id == sourceId }
+        }
+        
+        // Fallback: Legacy matching for transactions created before this fix
+        // Check all repeating planned payments
+        let repeatingPayments = manager.subscriptions.filter { $0.isRepeating }
+        
+        for payment in repeatingPayments {
+            // Check if transaction matches this payment's details
+            if transaction.title == payment.title &&
+               transaction.category == (payment.category ?? "General") &&
+               transaction.accountName == payment.accountName &&
+               abs(transaction.amount - payment.amount) < 0.01 {
+                // Check if the date matches the repetition pattern
+                guard let frequencyString = payment.repetitionFrequency,
+                      let frequency = RepetitionFrequency(rawValue: frequencyString),
+                      let interval = payment.repetitionInterval else {
+                    continue
+                }
+                
+                let weekdays = payment.selectedWeekdays.map { Set($0) } ?? []
+                let calendar = Calendar.current
+                let startDate = payment.date
+                let skippedDates = payment.skippedDates ?? []
+                let paymentEndDate = payment.endDate
+                
+                // Generate occurrences and check if this transaction's date matches
+                let maxEndDate = calendar.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+                let actualEndDate = paymentEndDate ?? maxEndDate
+                
+                // Check if startDate matches (first occurrence)
+                let startDateStart = calendar.startOfDay(for: startDate)
+                let transactionDateStart = calendar.startOfDay(for: transaction.date)
+                let isStartDateSkipped = skippedDates.contains { skippedDate in
+                    calendar.isDate(startDateStart, inSameDayAs: skippedDate)
+                }
+                
+                if calendar.isDate(startDateStart, inSameDayAs: transactionDateStart) && !isStartDateSkipped {
+                    return payment
+                }
+                
+                var currentDate = calculateScheduledNextDate(
+                    from: startDate,
+                    frequency: frequency,
+                    interval: interval,
+                    weekdays: weekdays
+                )
+                
+                var iterationCount = 0
+                let maxIterations = 1000
+                
+                while currentDate <= actualEndDate && iterationCount < maxIterations {
+                    iterationCount += 1
+                    
+                    // Check if this date is skipped
+                    let isSkipped = skippedDates.contains { skippedDate in
+                        calendar.isDate(currentDate, inSameDayAs: skippedDate)
+                    }
+                    
+                    // If the transaction date matches and is not skipped, this is the source payment
+                    if calendar.isDate(currentDate, inSameDayAs: transaction.date) && !isSkipped {
+                        return payment
+                    }
+                    
+                    let nextDate = calculateScheduledNextDate(
+                        from: currentDate,
+                        frequency: frequency,
+                        interval: interval,
+                        weekdays: weekdays
+                    )
+                    
+                    if nextDate <= currentDate || nextDate > actualEndDate {
+                        break
+                    }
+                    
+                    currentDate = nextDate
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    // RepetitionFrequency enum for scheduled calculations
+    private enum RepetitionFrequency: String {
+        case day = "Day"
+        case week = "Week"
+        case month = "Month"
+        case year = "Year"
     }
 }
 
@@ -642,61 +939,121 @@ struct SubscriptionRow: View {
     }
 }
 
-// MARK: - Custom Subscription Form View
+// MARK: - CustomSubscriptionFormView (Transaction-Style Form)
 
 struct CustomSubscriptionFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var accountManager: AccountManager
     
     let paymentType: PlannedPaymentType
     let existingPayment: PlannedPayment?
     let initialIsIncome: Bool
     let onSave: (PlannedPayment) -> Void
     let onCancel: () -> Void
+    let onDelete: ((PlannedPayment) -> Void)?
     
     @State private var title: String = ""
     @State private var amount: Double = 0
+    @State private var amountText: String = ""
     @State private var date: Date = Date()
     @State private var accountName: String = "Main Card"
-    @State private var selectedCategory: String? = nil
+    @State private var selectedCategory: Category? = nil
     @State private var isIncome: Bool = false
+    @State private var showCategoryPicker = false
+    @State private var showAccountPicker = false
+    
+    // Repetition settings
+    @State private var isRepeating: Bool = false
+    @State private var repetitionFrequency: RepetitionFrequency = .month
+    @State private var repetitionInterval: Int = 1
+    @State private var selectedWeekdays: Set<Int> = [] // 0 = Sunday, 1 = Monday, etc.
     
     @FocusState private var isAmountFocused: Bool
     
-    private let categories: [(name: String, icon: String, color: Color)] = [
-        ("Entertainment", "tv.fill", .purple),
-        ("Utilities", "bolt.fill", .yellow),
-        ("Housing", "house.fill", .blue),
-        ("General", "arrow.triangle.2.circlepath", .gray),
-        ("Debt", "creditcard.fill", .red),
-        ("Health", "heart.fill", .pink),
-        ("Shopping", "bag.fill", .orange),
-        ("Transport", "car.fill", .cyan),
-        ("Income", "arrow.down.circle.fill", .green)
-    ]
+    enum RepetitionFrequency: String, CaseIterable {
+        case day = "Day"
+        case week = "Week"
+        case month = "Month"
+        case year = "Year"
+        
+        var localizedTitle: String {
+            switch self {
+            case .day:
+                return String(localized: "Day", comment: "Day frequency")
+            case .week:
+                return String(localized: "Week", comment: "Week frequency")
+            case .month:
+                return String(localized: "Month", comment: "Month frequency")
+            case .year:
+                return String(localized: "Year", comment: "Year frequency")
+            }
+        }
+        
+        var localizedUnit: String {
+            switch self {
+            case .day:
+                return String(localized: "day", comment: "day unit")
+            case .week:
+                return String(localized: "week", comment: "week unit")
+            case .month:
+                return String(localized: "month", comment: "month unit")
+            case .year:
+                return String(localized: "year", comment: "year unit")
+            }
+        }
+    }
     
-    private let accounts = ["Main Card", "Savings", "Credit Card"]
+    private var availableCategories: [Category] {
+        let filtered = settings.categories.isEmpty ? Category.defaultCategories : settings.categories
+        return filtered.filter { $0.type == (isIncome ? .income : .expense) }
+    }
+    
+    private var accounts: [Account] {
+        accountManager.accounts.isEmpty ? [Account(name: "Main Card", balance: 0, iconName: "creditcard")] : accountManager.accounts
+    }
+    
+    private var selectedAccount: Account? {
+        accounts.first(where: { $0.name == accountName }) ?? accounts.first
+    }
+    
+    private var themeColor: Color {
+        isIncome ? .green : .red
+    }
+    
+    private var signSymbol: String {
+        isIncome ? "+" : "-"
+    }
     
     init(
         paymentType: PlannedPaymentType,
         existingPayment: PlannedPayment? = nil,
         initialIsIncome: Bool = false,
         onSave: @escaping (PlannedPayment) -> Void,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        onDelete: ((PlannedPayment) -> Void)? = nil
     ) {
         self.paymentType = paymentType
         self.existingPayment = existingPayment
         self.initialIsIncome = initialIsIncome
         self.onSave = onSave
         self.onCancel = onCancel
+        self.onDelete = onDelete
         
         if let existing = existingPayment {
             _title = State(initialValue: existing.title)
             _amount = State(initialValue: existing.amount)
             _date = State(initialValue: existing.date)
             _accountName = State(initialValue: existing.accountName)
-            _selectedCategory = State(initialValue: existing.category)
             _isIncome = State(initialValue: existing.isIncome)
+            _isRepeating = State(initialValue: existing.isRepeating)
+            if let freq = existing.repetitionFrequency {
+                _repetitionFrequency = State(initialValue: RepetitionFrequency(rawValue: freq) ?? .month)
+            }
+            _repetitionInterval = State(initialValue: existing.repetitionInterval ?? 1)
+            if let weekdays = existing.selectedWeekdays {
+                _selectedWeekdays = State(initialValue: Set(weekdays))
+            }
         } else {
             _isIncome = State(initialValue: initialIsIncome)
         }
@@ -713,103 +1070,86 @@ struct CustomSubscriptionFormView: View {
                 
                 ScrollView {
                     VStack(spacing: 24) {
-                        // Type Toggle (Income/Expense)
-                        VStack(spacing: 12) {
-                            Text("Type", comment: "Type field label")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            
-                            Picker("Type", selection: $isIncome) {
-                                Text("Expense", comment: "Expense type").tag(false)
-                                Text("Income", comment: "Income type").tag(true)
-                            }
-                            .pickerStyle(.segmented)
-                        }
-                        .padding(.horizontal)
-                        .padding(.top)
+                        // Segmented Control at Top
+                        typeSegmentedControl
+                            .padding(.horizontal)
+                            .padding(.top, 8)
                         
-                        // Large Amount Input (Top Center)
-                        VStack(spacing: 8) {
-                            Text("Amount", comment: "Amount field label")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            TextField("0", value: $amount, format: .number)
-                                .font(.system(size: 48, weight: .bold))
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.center)
-                                .focused($isAmountFocused)
-                                .padding(.vertical, 20)
-                                .frame(maxWidth: .infinity)
-                                .background(Color.customCardBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        }
-                        .padding(.horizontal)
-                        
-                        // Category Selection (Horizontal Scrollable Grid)
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Category", comment: "Category field label")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal)
-                            
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(categories, id: \.name) { category in
-                                        CategoryChip(
-                                            name: category.name,
-                                            icon: category.icon,
-                                            color: category.color,
-                                            isSelected: selectedCategory == category.name || (selectedCategory == nil && category.name == "General")
-                                        ) {
-                                            selectedCategory = category.name == "General" ? nil : category.name
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                        }
-                        .padding(.top, 8)
+                        // Hero Amount Input (Center)
+                        heroAmountField
+                            .padding(.horizontal)
                         
                         // Input Fields
                         VStack(spacing: 16) {
-                            // Name Field
-                            CustomFormRow(
+                            // Note/Title Field
+                            TransactionFormRow(
                                 icon: "text.alignleft",
                                 title: String(localized: "Name", comment: "Name field label"),
                                 value: $title,
                                 placeholder: isIncome ? String(localized: "Income source name", comment: "Income source placeholder") : String(localized: "Subscription name", comment: "Subscription name placeholder")
                             )
                             
+                            // Category Field
+                            TransactionCategoryRow(
+                                icon: "tag",
+                                title: String(localized: "Category", comment: "Category field label"),
+                                category: selectedCategory,
+                                categoryName: selectedCategory?.name ?? "",
+                                placeholder: String(localized: "Select Category", comment: "Category placeholder"),
+                                onTap: { showCategoryPicker = true }
+                            )
+                            
                             // Date Field
-                            DatePickerRow(
+                            TransactionDateRow(
                                 icon: "calendar",
                                 title: String(localized: "Next Payment Date", comment: "Next payment date label"),
                                 date: $date
                             )
                             
                             // Account Field
-                            AccountPickerRow(
+                            TransactionAccountRow(
                                 icon: "creditcard",
                                 title: String(localized: "Account", comment: "Account field label"),
-                                selectedAccount: $accountName,
-                                accounts: accounts
+                                account: selectedAccount,
+                                placeholder: String(localized: "Select Account", comment: "Account placeholder"),
+                                onTap: { showAccountPicker = true }
                             )
                         }
                         .padding(.horizontal)
                         
+                        // Repetition Section
+                        repetitionSection
+                            .padding(.horizontal)
+                        
                         // Save Button
                         Button {
+                            // Calculate next payment date based on repetition settings
+                            var nextDate = date
+                            if isRepeating {
+                                nextDate = calculateNextPaymentDate(
+                                    from: date,
+                                    frequency: repetitionFrequency,
+                                    interval: repetitionInterval,
+                                    weekdays: selectedWeekdays
+                                )
+                            }
+                            
                             let payment = PlannedPayment(
                                 id: existingPayment?.id ?? UUID(),
                                 title: title.trimmingCharacters(in: .whitespaces),
                                 amount: amount,
-                                date: date,
+                                date: nextDate,
                                 status: existingPayment?.status ?? .upcoming,
                                 accountName: accountName,
-                                category: selectedCategory,
+                                category: selectedCategory?.name,
                                 type: paymentType,
-                                isIncome: isIncome
+                                isIncome: isIncome,
+                                isRepeating: isRepeating,
+                                repetitionFrequency: isRepeating ? repetitionFrequency.rawValue : nil,
+                                repetitionInterval: isRepeating ? repetitionInterval : nil,
+                                selectedWeekdays: (isRepeating && repetitionFrequency == .week && !selectedWeekdays.isEmpty) ? Array(selectedWeekdays) : nil,
+                                skippedDates: existingPayment?.skippedDates,
+                                endDate: existingPayment?.endDate
                             )
                             onSave(payment)
                         } label: {
@@ -818,30 +1158,13 @@ struct CustomSubscriptionFormView: View {
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
-                                .background(isValid ? (isIncome ? Color.green : Color.blue) : Color.gray.opacity(0.3))
+                                .background(isValid ? themeColor : Color.gray.opacity(0.3))
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
                         .disabled(!isValid)
                         .padding(.horizontal)
                         .padding(.top, 8)
-                        
-                        // Delete Button (only when editing)
-                        if existingPayment != nil {
-                            Button {
-                                // Delete action would be handled by parent
-                                onCancel()
-                            } label: {
-                                Text("Delete Subscription", comment: "Delete subscription button")
-                                    .font(.headline)
-                                    .foregroundColor(.red)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 16)
-                                    .background(Color.red.opacity(0.1))
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            }
-                            .padding(.horizontal)
-                            .padding(.bottom, 20)
-                        }
+                        .padding(.bottom, 20)
                     }
                 }
             }
@@ -853,142 +1176,395 @@ struct CustomSubscriptionFormView: View {
                         onCancel()
                     }
                 }
+                
+                // Delete Button in Top-Right (only when editing)
+                if let existingPayment = existingPayment, let onDelete = onDelete {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            onDelete(existingPayment)
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showCategoryPicker) {
+                categoryPickerSheet
+                    .environmentObject(settings)
+            }
+            .sheet(isPresented: $showAccountPicker) {
+                accountPickerSheet
             }
             .onAppear {
+                // Initialize amount text
+                if amount == 0 {
+                    amountText = ""
+                } else {
+                    amountText = formatAmount(amount)
+                }
+                // Initialize account
+                if accountName.isEmpty || !accounts.contains(where: { $0.name == accountName }) {
+                    accountName = accounts.first?.name ?? "Main Card"
+                }
+                // Initialize category
+                if let categoryName = existingPayment?.category,
+                   let category = availableCategories.first(where: { $0.name == categoryName }) {
+                    selectedCategory = category
+                }
+                // Initialize repetition settings
+                if let existing = existingPayment {
+                    isRepeating = existing.isRepeating
+                    if let freq = existing.repetitionFrequency {
+                        repetitionFrequency = RepetitionFrequency(rawValue: freq) ?? .month
+                    }
+                    repetitionInterval = existing.repetitionInterval ?? 1
+                    if let weekdays = existing.selectedWeekdays {
+                        selectedWeekdays = Set(weekdays)
+                    }
+                }
                 // Auto-focus amount field
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     isAmountFocused = true
                 }
             }
+            .onChange(of: amount) { oldValue, newValue in
+                if newValue == 0 {
+                    amountText = ""
+                } else if amountText.isEmpty || abs(newValue - (Double(amountText) ?? 0)) > 0.01 {
+                    amountText = formatAmount(newValue)
+                }
+            }
+            .onChange(of: isIncome) { oldValue, newValue in
+                // Clear category when switching type
+                selectedCategory = nil
+            }
+        }
+        .presentationDetents([.large])
+    }
+    
+    // MARK: - Type Segmented Control
+    private var typeSegmentedControl: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isIncome = false
+                }
+            } label: {
+                Text(String(localized: "Expense", comment: "Expense type"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isIncome ? .primary : Color.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isIncome ? Color.clear : Color.red)
+                    )
+            }
+            .buttonStyle(.plain)
+            
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isIncome = true
+                }
+            } label: {
+                Text(String(localized: "Income", comment: "Income type"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isIncome ? Color.white : .primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isIncome ? Color.green : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(4)
+        .background(Color.customCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+    
+    // MARK: - Hero Amount Field
+    private var heroAmountField: some View {
+        VStack(spacing: 8) {
+            Text(String(localized: "Amount", comment: "Amount field label"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Spacer()
+                
+                if !signSymbol.isEmpty {
+                    Text(signSymbol)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(themeColor)
+                }
+                
+                TextField("0", text: $amountText)
+                    .font(.system(size: 64, weight: .heavy, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($isAmountFocused)
+                    .foregroundStyle(.primary)
+                    .frame(minWidth: 120)
+                    .onChange(of: amountText) { oldValue, newValue in
+                        handleAmountInput(newValue)
+                    }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
         }
     }
-}
-
-// MARK: - Form Components
-
-struct CategoryChip: View {
-    let name: String
-    let icon: String
-    let color: Color
-    let isSelected: Bool
-    let action: () -> Void
     
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
+    // MARK: - Amount Input Handler
+    private func handleAmountInput(_ newValue: String) {
+        let cleaned = normalizeDecimalInput(newValue)
+        
+        if amount == 0 && !cleaned.isEmpty {
+            if let firstChar = cleaned.first, firstChar.isNumber, firstChar != "0" {
+                amountText = cleaned
+                if let value = Double(cleaned) {
+                    amount = value
+                }
+                return
+            }
+        }
+        
+        amountText = cleaned
+        
+        if cleaned.isEmpty {
+            amount = 0
+        } else if let value = Double(cleaned) {
+            amount = value
+        }
+    }
+    
+    // MARK: - Format Amount
+    private func formatAmount(_ amount: Double) -> String {
+        if amount.truncatingRemainder(dividingBy: 1) == 0 {
+            return String(format: "%.0f", amount)
+        } else {
+            let formatted = String(format: "%.2f", amount)
+            return formatted.trimmingCharacters(in: CharacterSet(charactersIn: "0")).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        }
+    }
+    
+    // MARK: - Normalize Decimal Input
+    private func normalizeDecimalInput(_ input: String) -> String {
+        // Replace comma with dot for decimal separator
+        return input.replacingOccurrences(of: ",", with: ".")
+    }
+    
+    // MARK: - Calculate Next Payment Date
+    private func calculateNextPaymentDate(
+        from startDate: Date,
+        frequency: RepetitionFrequency,
+        interval: Int,
+        weekdays: Set<Int>
+    ) -> Date {
+        let calendar = Calendar.current
+        var nextDate = startDate
+        
+        // If the start date is in the past, calculate the next occurrence
+        if startDate < Date() {
+            switch frequency {
+            case .day:
+                // Add interval days
+                while nextDate < Date() {
+                    nextDate = calendar.date(byAdding: .day, value: interval, to: nextDate) ?? nextDate
+                }
+                
+            case .week:
+                // Find next matching weekday
+                if !weekdays.isEmpty {
+                    // Find the next matching weekday
+                    var found = false
+                    for weekOffset in 0..<(interval * 7) {
+                        let checkDate = calendar.date(byAdding: .day, value: weekOffset, to: Date()) ?? Date()
+                        let checkWeekday = calendar.component(.weekday, from: checkDate)
+                        let adjustedCheckWeekday = checkWeekday == 1 ? 7 : checkWeekday - 1
+                        
+                        if weekdays.contains(adjustedCheckWeekday) && checkDate >= startDate {
+                            nextDate = checkDate
+                            found = true
+                            break
+                        }
+                    }
+                    
+                    if !found {
+                        // If no matching weekday found in reasonable range, use interval weeks from start
+                        nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+                    }
+                } else {
+                    // No weekdays selected, just add interval weeks
+                    nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+                    while nextDate < Date() {
+                        nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: nextDate) ?? nextDate
+                    }
+                }
+                
+            case .month:
+                // Add interval months, keeping the same day of month
+                while nextDate < Date() {
+                    nextDate = calendar.date(byAdding: .month, value: interval, to: nextDate) ?? nextDate
+                }
+                
+            case .year:
+                // Add interval years
+                while nextDate < Date() {
+                    nextDate = calendar.date(byAdding: .year, value: interval, to: nextDate) ?? nextDate
+                }
+            }
+        }
+        
+        return nextDate
+    }
+    
+    // MARK: - Category Picker Sheet
+    private var categoryPickerSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 0) {
+                    if availableCategories.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "folder.badge.questionmark")
+                                .font(.system(size: 48))
+                                .foregroundStyle(.secondary)
+                            Text("No categories available")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 60)
+                    } else {
+                        ForEach(availableCategories) { category in
+                            Button {
+                                selectedCategory = category
+                                showCategoryPicker = false
+                            } label: {
+                                HStack(spacing: 16) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(category.color.opacity(0.15))
+                                            .frame(width: 44, height: 44)
+                                        Image(systemName: category.iconName)
+                                            .font(.headline)
+                                            .foregroundStyle(category.color)
+                                    }
+                                    
+                                    Text(category.name)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    
+                                    Spacer()
+                                    
+                                    if selectedCategory?.id == category.id {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.blue)
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                                .background(Color.customCardBackground)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(String(localized: "Select Category", comment: "Select category sheet title"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.large])
+    }
+    
+    // MARK: - Account Picker Sheet
+    private var accountPickerSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(accounts) { account in
+                        accountPickerItem(account: account)
+                            .id(account.id)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color.customBackground)
+            .navigationTitle(String(localized: "Select Account", comment: "Select account sheet title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(String(localized: "Done", comment: "Done button")) {
+                        showAccountPicker = false
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+    
+    private func accountPickerItem(account: Account) -> some View {
+        Button {
+            accountName = account.name
+            showAccountPicker = false
+        } label: {
+            HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(isSelected ? color.opacity(0.2) : color.opacity(0.1))
-                        .frame(width: 56, height: 56)
-                    Image(systemName: icon)
+                        .fill(account.accountType == .cash ? Color.green.opacity(0.15) : account.accountType == .card ? Color.blue.opacity(0.15) : Color.purple.opacity(0.15))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: account.iconName)
                         .font(.title3)
-                        .foregroundStyle(isSelected ? color : .secondary)
+                        .foregroundStyle(account.accountType == .cash ? .green : account.accountType == .card ? .blue : .purple)
                 }
-                Text(name)
-                    .font(.caption2)
-                    .foregroundStyle(isSelected ? .primary : .secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(account.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(currencyString(account.balance))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                let isSelected = accountName == account.name
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.accentColor)
+                }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(isSelected ? color.opacity(0.1) : Color.clear)
+            .padding(12)
+            .frame(height: 72)
+            .background({
+                let isSelected = accountName == account.name
+                return isSelected ? Color.accentColor.opacity(0.1) : Color.customCardBackground
+            }())
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? color : Color.clear, lineWidth: 2)
+                    .stroke({
+                        let isSelected = accountName == account.name
+                        return isSelected ? Color.accentColor.opacity(0.3) : Color.primary.opacity(0.08)
+                    }(), lineWidth: {
+                        let isSelected = accountName == account.name
+                        return isSelected ? 1.5 : 1
+                    }())
             )
         }
         .buttonStyle(.plain)
     }
-}
-
-struct CustomFormRow: View {
-    let icon: String
-    let title: String
-    @Binding var value: String
-    let placeholder: String
     
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.headline)
-                .foregroundStyle(.blue)
-                .frame(width: 24)
-            
-            TextField(placeholder, text: $value)
-                .font(.body)
-        }
-        .padding(16)
-        .background(Color.customCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-}
-
-struct DatePickerRow: View {
-    let icon: String
-    let title: String
-    @Binding var date: Date
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.headline)
-                .foregroundStyle(.blue)
-                .frame(width: 24)
-            
-            Text(title)
-                .font(.body)
-                .foregroundStyle(.primary)
-            
-            Spacer()
-            
-            DatePicker("", selection: $date, displayedComponents: .date)
-                .labelsHidden()
-        }
-        .padding(16)
-        .background(Color.customCardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-}
-
-struct AccountPickerRow: View {
-    let icon: String
-    let title: String
-    @Binding var selectedAccount: String
-    let accounts: [String]
-    
-    @State private var showPicker = false
-    
-    var body: some View {
-        Button {
-            showPicker = true
-        } label: {
-            HStack(spacing: 16) {
-                Image(systemName: icon)
-                    .font(.headline)
-                    .foregroundStyle(.blue)
-                    .frame(width: 24)
-                
-                Text(title)
+    // MARK: - Repetition Section
+    private var repetitionSection: some View {
+        VStack(spacing: 20) {
+            // Repeat Operation Toggle
+            HStack {
+                Text(String(localized: "Repeat operation", comment: "Repeat operation toggle"))
                     .font(.body)
                     .foregroundStyle(.primary)
-                
                 Spacer()
-                
-                Text(selectedAccount)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.secondary)
-                
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Toggle("", isOn: $isRepeating)
+                    .labelsHidden()
             }
             .padding(16)
             .background(Color.customCardBackground)
@@ -997,32 +1573,158 @@ struct AccountPickerRow: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
-        }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $showPicker) {
-            NavigationStack {
-                List {
-                    ForEach(accounts, id: \.self) { account in
-                        Button {
-                            selectedAccount = account
-                            showPicker = false
-                        } label: {
-                            HStack {
-                                Text(account)
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                if selectedAccount == account {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.blue)
+            
+            if isRepeating {
+                VStack(spacing: 16) {
+                    // Frequency Label
+                    Text(String(localized: "Repetition frequency", comment: "Repetition frequency label"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    // Frequency Selector (Day, Week, Month, Year)
+                    HStack(spacing: 0) {
+                        ForEach(RepetitionFrequency.allCases, id: \.self) { frequency in
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    repetitionFrequency = frequency
+                                    // Clear weekdays when switching away from week
+                                    if frequency != .week {
+                                        selectedWeekdays.removeAll()
+                                    }
                                 }
+                            } label: {
+                                Text(frequency.localizedTitle)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(repetitionFrequency == frequency ? Color.white : .primary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(repetitionFrequency == frequency ? Color.blue : Color.clear)
+                                    )
                             }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding(4)
+                    .background(Color.customCardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
+                    
+                    // Day of Week Selection (only for Week frequency)
+                    if repetitionFrequency == .week {
+                        HStack(spacing: 8) {
+                            ForEach(weekdayOptions, id: \.value) { weekday in
+                                Button {
+                                    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                                        if selectedWeekdays.contains(weekday.value) {
+                                            selectedWeekdays.remove(weekday.value)
+                                        } else {
+                                            selectedWeekdays.insert(weekday.value)
+                                        }
+                                    }
+                                } label: {
+                                    Text(weekday.shortName)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(selectedWeekdays.contains(weekday.value) ? Color.white : .primary)
+                                        .frame(width: 40, height: 40)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(selectedWeekdays.contains(weekday.value) ? Color.blue : Color.customCardBackground)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    
+                    // Repeat Every Label and Number Picker
+                    VStack(spacing: 12) {
+                        HStack {
+                            Text(String(localized: "Repeat every", comment: "Repeat every label"))
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.red)
+                            Spacer()
+                            Text("\(repetitionInterval) \(repetitionFrequency.localizedUnit)")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.red)
+                        }
+                        .padding(.horizontal, 4)
+                        
+                        // Number Picker (Wheel Style)
+                        Picker("", selection: $repetitionInterval) {
+                            ForEach(1...30, id: \.self) { number in
+                                Text("\(number)")
+                                    .tag(number)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 120)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.customCardBackground.opacity(0.5))
+                        )
+                    }
+                    .padding(16)
+                    .background(Color.customCardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
                 }
-                .navigationTitle(Text("Select Account", comment: "Select account sheet title"))
-                .navigationBarTitleDisplayMode(.inline)
+                .padding(16)
+                .background(Color.customCardBackground.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
             }
-            .presentationDetents([.medium])
+        }
+    }
+    
+    // MARK: - Weekday Options
+    private struct WeekdayOption: Identifiable {
+        let id: Int
+        let value: Int
+        let shortName: String
+        let fullName: String
+    }
+    
+    private var weekdayOptions: [WeekdayOption] {
+        let calendar = Calendar.current
+        let firstWeekday = calendar.firstWeekday // Usually 1 (Sunday) or 2 (Monday)
+        
+        let weekdays = [
+            WeekdayOption(id: 1, value: 1, shortName: String(localized: "Mon", comment: "Monday"), fullName: String(localized: "Monday", comment: "Monday full")),
+            WeekdayOption(id: 2, value: 2, shortName: String(localized: "Tue", comment: "Tuesday"), fullName: String(localized: "Tuesday", comment: "Tuesday full")),
+            WeekdayOption(id: 3, value: 3, shortName: String(localized: "Wed", comment: "Wednesday"), fullName: String(localized: "Wednesday", comment: "Wednesday full")),
+            WeekdayOption(id: 4, value: 4, shortName: String(localized: "Thu", comment: "Thursday"), fullName: String(localized: "Thursday", comment: "Thursday full")),
+            WeekdayOption(id: 5, value: 5, shortName: String(localized: "Fri", comment: "Friday"), fullName: String(localized: "Friday", comment: "Friday full")),
+            WeekdayOption(id: 6, value: 6, shortName: String(localized: "Sat", comment: "Saturday"), fullName: String(localized: "Saturday", comment: "Saturday full")),
+            WeekdayOption(id: 0, value: 0, shortName: String(localized: "Sun", comment: "Sunday"), fullName: String(localized: "Sunday", comment: "Sunday full"))
+        ]
+        
+        // Reorder based on calendar's first weekday
+        if firstWeekday == 1 {
+            // Sunday first
+            return weekdays.sorted { (a: WeekdayOption, b: WeekdayOption) in
+                a.value < b.value
+            }
+        } else {
+            // Monday first
+            return weekdays.sorted { (a: WeekdayOption, b: WeekdayOption) in
+                let aValue = a.value == 0 ? 7 : a.value
+                let bValue = b.value == 0 ? 7 : b.value
+                return aValue < bValue
+            }
         }
     }
 }
+

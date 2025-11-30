@@ -116,6 +116,85 @@ class SubscriptionManager: ObservableObject {
         subscriptions.filter { $0.isIncome == isIncome }
     }
     
+    // Skip a specific date for a repeating payment
+    func skipDate(for payment: PlannedPayment, date: Date) {
+        guard let index = subscriptions.firstIndex(where: { $0.id == payment.id }) else {
+            return
+        }
+        
+        let calendar = Calendar.current
+        let dateToSkip = calendar.startOfDay(for: date)
+        
+        var existingSkippedDates = payment.skippedDates ?? []
+        
+        // Check if date is already skipped
+        if !existingSkippedDates.contains(where: { calendar.isDate($0, inSameDayAs: dateToSkip) }) {
+            existingSkippedDates.append(dateToSkip)
+            
+            // Update the payment with new skipped dates
+            let updatedPayment = PlannedPayment(
+                id: payment.id,
+                title: payment.title,
+                amount: payment.amount,
+                date: payment.date,
+                status: payment.status,
+                accountName: payment.accountName,
+                category: payment.category,
+                type: payment.type,
+                isIncome: payment.isIncome,
+                totalLoanAmount: payment.totalLoanAmount,
+                remainingBalance: payment.remainingBalance,
+                startDate: payment.startDate,
+                interestRate: payment.interestRate,
+                isRepeating: payment.isRepeating,
+                repetitionFrequency: payment.repetitionFrequency,
+                repetitionInterval: payment.repetitionInterval,
+                selectedWeekdays: payment.selectedWeekdays,
+                skippedDates: existingSkippedDates,
+                endDate: payment.endDate
+            )
+            
+            subscriptions[index] = updatedPayment
+            saveData()
+        }
+    }
+    
+    // Set end date for a repeating payment (terminate chain from a specific date forward)
+    func setEndDate(for payment: PlannedPayment, endDate: Date) {
+        guard let index = subscriptions.firstIndex(where: { $0.id == payment.id }) else {
+            return
+        }
+        
+        let calendar = Calendar.current
+        let endDateToSet = calendar.startOfDay(for: endDate)
+        
+        // Update the payment with end date
+        let updatedPayment = PlannedPayment(
+            id: payment.id,
+            title: payment.title,
+            amount: payment.amount,
+            date: payment.date,
+            status: payment.status,
+            accountName: payment.accountName,
+            category: payment.category,
+            type: payment.type,
+            isIncome: payment.isIncome,
+            totalLoanAmount: payment.totalLoanAmount,
+            remainingBalance: payment.remainingBalance,
+            startDate: payment.startDate,
+            interestRate: payment.interestRate,
+            isRepeating: payment.isRepeating,
+            repetitionFrequency: payment.repetitionFrequency,
+            repetitionInterval: payment.repetitionInterval,
+            selectedWeekdays: payment.selectedWeekdays,
+            skippedDates: payment.skippedDates,
+            endDate: endDateToSet
+        )
+        
+        subscriptions[index] = updatedPayment
+        saveData()
+    }
+    
     // MARK: - Persistence
     
     private func saveData() {

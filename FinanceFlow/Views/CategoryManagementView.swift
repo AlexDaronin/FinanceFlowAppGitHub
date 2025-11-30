@@ -20,6 +20,7 @@ struct CategoryManagementView: View {
     @State private var selectedCategoryType: CategoryType = .expense
     
     private let deletedCategoriesKey = "deletedDefaultCategories"
+    private let editedCategoriesKey = "editedDefaultCategories"
     
     // Track deleted default categories by name+type
     private var deletedDefaultCategories: Set<String> {
@@ -32,6 +33,22 @@ struct CategoryManagementView: View {
         }
     }
     
+    // Track edited default categories by their original name+type
+    private var editedDefaultCategories: Set<String> {
+        if let data = UserDefaults.standard.data(forKey: editedCategoriesKey),
+           let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            return decoded
+        }
+        return []
+    }
+    
+    private func saveEditedCategories(_ edited: Set<String>) {
+        if let encoded = try? JSONEncoder().encode(edited) {
+            UserDefaults.standard.set(encoded, forKey: editedCategoriesKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+    
     private func markCategoryAsDeleted(_ category: Category) {
         var deleted = deletedDefaultCategories
         deleted.insert(categoryKey(category))
@@ -41,26 +58,50 @@ struct CategoryManagementView: View {
         }
     }
     
+    private func markCategoryAsEdited(_ originalCategory: Category) {
+        // Check if this is a default category
+        let defaults = Category.defaultCategories
+        if defaults.contains(where: { $0.name == originalCategory.name && $0.type == originalCategory.type }) {
+            var edited = editedDefaultCategories
+            edited.insert(categoryKey(originalCategory))
+            saveEditedCategories(edited)
+        }
+    }
+    
     private func categoryKey(_ category: Category) -> String {
         "\(category.name)|\(category.type.rawValue)"
     }
     
     private var filteredCategories: [Category] {
-        // Start with saved categories
-        var allCategories = settings.categories
+        // Start with saved categories - remove any duplicates first
+        var allCategories = removeDuplicates(settings.categories)
         
-        // Add defaults that aren't deleted and aren't already in saved categories
+        // Add defaults that aren't deleted and haven't been edited
         let defaults = Category.defaultCategories
         let deleted = deletedDefaultCategories
+        let edited = editedDefaultCategories
+        
+        // Create a set of saved category IDs and names+types for quick lookup
+        let savedIds = Set(allCategories.map { $0.id })
+        let savedNameTypes = Set(allCategories.map { categoryKey($0) })
+        
         for defaultCat in defaults {
             let key = categoryKey(defaultCat)
             let isDeleted = deleted.contains(key)
-            let exists = allCategories.contains { $0.name == defaultCat.name && $0.type == defaultCat.type }
+            let wasEdited = edited.contains(key)
             
-            if !isDeleted && !exists {
+            // Check if this default already exists in saved categories (by ID or name+type)
+            let existsById = savedIds.contains(defaultCat.id)
+            let existsByNameType = savedNameTypes.contains(key)
+            
+            // Only add default if: not deleted AND not edited AND doesn't already exist
+            if !isDeleted && !wasEdited && !existsById && !existsByNameType {
                 allCategories.append(defaultCat)
             }
         }
+        
+        // Remove duplicates again after merging
+        allCategories = removeDuplicates(allCategories)
         
         if searchText.isEmpty {
             return allCategories.sorted { $0.name < $1.name }
@@ -71,6 +112,26 @@ struct CategoryManagementView: View {
                 category.subcategories.contains { $0.name.localizedCaseInsensitiveContains(searchText) }
             }
             .sorted { $0.name < $1.name }
+    }
+    
+    // Remove duplicate categories (same name+type or same ID)
+    private func removeDuplicates(_ categories: [Category]) -> [Category] {
+        var seen = Set<String>()
+        var seenIds = Set<UUID>()
+        var result: [Category] = []
+        
+        for category in categories {
+            let key = categoryKey(category)
+            // Keep first occurrence - check both name+type AND ID to catch all duplicates
+            let isDuplicate = seen.contains(key) || seenIds.contains(category.id)
+            if !isDuplicate {
+                seen.insert(key)
+                seenIds.insert(category.id)
+                result.append(category)
+            }
+        }
+        
+        return result
     }
     
     private var displayedCategories: [Category] {
@@ -130,6 +191,13 @@ struct CategoryManagementView: View {
         .navigationTitle(String(localized: "Categories", comment: "Categories title"))
         .navigationBarTitleDisplayMode(.large)
         .searchable(text: $searchText, prompt: String(localized: "Search categories", comment: "Search placeholder"))
+        .onAppear {
+            // Clean up any duplicates in saved categories
+            let cleaned = removeDuplicates(settings.categories)
+            if cleaned.count != settings.categories.count {
+                settings.categories = cleaned
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -174,21 +242,37 @@ struct CategoryManagementView: View {
     }
     
     private func addCategory(_ category: Category) {
-        settings.categories.append(category)
+        // Check for duplicates before adding
+        let key = categoryKey(category)
+        let exists = settings.categories.contains { categoryKey($0) == key || $0.id == category.id }
+        if !exists {
+            settings.categories.append(category)
+        }
     }
     
     private func updateCategory(_ oldCategory: Category, with newCategory: Category) {
-        let categoryId = newCategory.id
+        // Mark as edited if it's a default category
+        markCategoryAsEdited(oldCategory)
         
-        if let index = settings.categories.firstIndex(where: { $0.id == categoryId }) {
+        // First, try to find by the old category's ID (most reliable)
+        if let index = settings.categories.firstIndex(where: { $0.id == oldCategory.id }) {
             var updated = settings.categories
-            updated[index] = newCategory
+            // Update the category while preserving the original ID
+            updated[index] = Category(
+                id: oldCategory.id, // Keep the original ID
+                name: newCategory.name,
+                iconName: newCategory.iconName,
+                colorName: newCategory.colorName,
+                type: newCategory.type,
+                subcategories: newCategory.subcategories
+            )
             settings.categories = updated
-        } else if let index = settings.categories.firstIndex(where: { $0.name == newCategory.name && $0.type == newCategory.type }) {
+        } else if let index = settings.categories.firstIndex(where: { $0.name == oldCategory.name && $0.type == oldCategory.type }) {
+            // Fallback: find by old category's name and type (for default categories)
             var updated = settings.categories
             let existingId = updated[index].id
             updated[index] = Category(
-                id: existingId,
+                id: existingId, // Preserve existing ID
                 name: newCategory.name,
                 iconName: newCategory.iconName,
                 colorName: newCategory.colorName,
@@ -197,7 +281,16 @@ struct CategoryManagementView: View {
             )
             settings.categories = updated
         } else {
-            settings.categories.append(newCategory)
+            // This is a default category being edited for the first time
+            // Add it to saved categories with the new name
+            settings.categories.append(Category(
+                id: oldCategory.id, // Use the original ID
+                name: newCategory.name,
+                iconName: newCategory.iconName,
+                colorName: newCategory.colorName,
+                type: newCategory.type,
+                subcategories: newCategory.subcategories
+            ))
         }
     }
     
@@ -225,9 +318,9 @@ struct CategoryCard: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Main category row
+            // Main category row - entire row is tappable
             HStack(spacing: 12) {
-                // Category icon - tappable to edit
+                // Category icon - tappable to edit (larger touch area)
                 Button {
                     onEdit()
                 } label: {
@@ -239,10 +332,12 @@ struct CategoryCard: View {
                             .font(.title3)
                             .foregroundStyle(category.color)
                     }
+                    .frame(minWidth: 44, minHeight: 44) // Minimum touch target
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 
-                // Category name and info - tappable to edit
+                // Category name and info - tappable to edit (larger touch area)
                 Button {
                     onEdit()
                 } label: {
@@ -274,10 +369,12 @@ struct CategoryCard: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 44) // Minimum touch target
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 
-                // Expand/collapse button (only for categories with subcategories)
+                // Expand/collapse button (only for categories with subcategories) - larger touch area
                 if !category.subcategories.isEmpty {
                     Button {
                         onToggleExpand()
@@ -285,14 +382,16 @@ struct CategoryCard: View {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
+                            .frame(minWidth: 44, minHeight: 44) // Minimum touch target
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .background(Color.customCardBackground)
+            .contentShape(Rectangle()) // Make entire row tappable
             
             // Subcategories (when expanded)
             if isExpanded && !category.subcategories.isEmpty {
@@ -605,8 +704,8 @@ struct CategoryFormView: View {
                                             validateSubcategoryName(subcategory.id)
                                             isSubcategoryNameFocused = false
                                         }
-                                        .onChange(of: isSubcategoryNameFocused) { isFocused in
-                                            if !isFocused {
+                                        .onChange(of: isSubcategoryNameFocused) { oldValue, newValue in
+                                            if !newValue {
                                                 validateSubcategoryName(subcategory.id)
                                             }
                                         }

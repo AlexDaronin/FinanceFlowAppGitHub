@@ -19,7 +19,12 @@ struct Transaction: Identifiable, Codable, Equatable {
     let toAccountName: String?
     let currency: String
     
-    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil, currency: String = "USD") {
+    // ISSUE 2 FIX: Optional fields for scheduled repeating payments
+    // These allow generated occurrences to reference their source PlannedPayment
+    let sourcePlannedPaymentId: UUID? // The ID of the PlannedPayment that generated this occurrence
+    let occurrenceDate: Date? // The specific date of this occurrence (same as date, but stored for clarity)
+    
+    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil, currency: String = "USD", sourcePlannedPaymentId: UUID? = nil, occurrenceDate: Date? = nil) {
         self.id = id
         self.title = title
         self.category = category
@@ -29,6 +34,8 @@ struct Transaction: Identifiable, Codable, Equatable {
         self.accountName = accountName
         self.toAccountName = toAccountName
         self.currency = currency
+        self.sourcePlannedPaymentId = sourcePlannedPaymentId
+        self.occurrenceDate = occurrenceDate ?? date // Default to date if not provided
     }
     
     func displayAmount(currencyCode: String? = nil) -> String {

@@ -39,6 +39,14 @@ struct PlannedPayment: Identifiable, Codable {
     let startDate: Date? // Loan start date (nil for subscriptions)
     let interestRate: Double? // Interest rate percentage (optional)
     
+    // Repetition properties
+    let isRepeating: Bool // Whether this payment repeats
+    let repetitionFrequency: String? // "Day", "Week", "Month", "Year"
+    let repetitionInterval: Int? // How many units (e.g., every 2 weeks)
+    let selectedWeekdays: [Int]? // For weekly repetition: [1,3,5] = Mon, Wed, Fri
+    let skippedDates: [Date]? // Dates that should be skipped when generating occurrences
+    let endDate: Date? // Date when the repeat chain should terminate (for "Delete All Future")
+    
     init(
         id: UUID = UUID(),
         title: String,
@@ -52,7 +60,13 @@ struct PlannedPayment: Identifiable, Codable {
         totalLoanAmount: Double? = nil,
         remainingBalance: Double? = nil,
         startDate: Date? = nil,
-        interestRate: Double? = nil
+        interestRate: Double? = nil,
+        isRepeating: Bool = false,
+        repetitionFrequency: String? = nil,
+        repetitionInterval: Int? = nil,
+        selectedWeekdays: [Int]? = nil,
+        skippedDates: [Date]? = nil,
+        endDate: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,6 +81,12 @@ struct PlannedPayment: Identifiable, Codable {
         self.remainingBalance = remainingBalance
         self.startDate = startDate
         self.interestRate = interestRate
+        self.isRepeating = isRepeating
+        self.repetitionFrequency = repetitionFrequency
+        self.repetitionInterval = repetitionInterval
+        self.selectedWeekdays = selectedWeekdays
+        self.skippedDates = skippedDates
+        self.endDate = endDate
     }
     
     // Computed properties for loans
