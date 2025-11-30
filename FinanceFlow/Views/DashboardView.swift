@@ -280,7 +280,9 @@ struct DashboardView: View {
             // Subscriptions (tappable)
             NavigationLink(destination: SubscriptionsView()
                 .environmentObject(settings)
-                .environmentObject(subscriptionManager)) {
+                .environmentObject(subscriptionManager)
+                .environmentObject(transactionManager)
+                .environmentObject(accountManager)) {
                 financialOverviewRow(
                     title: String(localized: "Planned", comment: "Planned payments section title"),
                     amount: subscriptionManager.monthlyBurnRate(startDay: settings.startDay),

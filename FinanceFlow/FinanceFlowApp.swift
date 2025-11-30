@@ -29,6 +29,11 @@ struct FinanceFlowApp: App {
                     .environmentObject(debtManager)
                     .environmentObject(creditManager)
                     .environment(\.locale, settings.locale)
+                    .onAppear {
+                        // Clean up old subscription transactions on app launch
+                        // This ensures old subscriptions are removed from TransactionManager
+                        subscriptionManager.cleanupOldTransactions(in: transactionManager)
+                    }
             } else {
                 AuthView()
                     .environmentObject(authManager)

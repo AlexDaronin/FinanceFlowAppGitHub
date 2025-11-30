@@ -191,3 +191,9 @@
 "Add" = "Agregar";
 "Month" = "Mes";
 "Year" = "Año";
+
+/* Deletion Modal (REQUIREMENT D) */
+"Delete scheduled transaction?" = "¿Eliminar transacción programada?";
+"Delete only this occurrence or the entire chain of future repeats?" = "¿Eliminar solo esta ocurrencia o toda la cadena de repeticiones futuras?";
+"Delete Only This" = "Eliminar solo esta";
+"Delete All Future" = "Eliminar todas las futuras";

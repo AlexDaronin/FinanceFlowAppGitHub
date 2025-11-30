@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 enum SubscriptionMode: String, CaseIterable {
     case expenses = "Expenses"
@@ -25,6 +26,7 @@ struct SubscriptionsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var manager: SubscriptionManager
     @EnvironmentObject var accountManager: AccountManager
+    @EnvironmentObject var transactionManager: TransactionManager
     @State private var showAddSheet = false
     @State private var selectedSubscription: PlannedPayment?
     @State private var selectedMode: SubscriptionMode = .expenses
@@ -54,44 +56,38 @@ struct SubscriptionsView: View {
         }
     }
     
-    // Generate scheduled occurrences for all repeating subscriptions (next 12 months)
+    // CLEAN: Scheduled occurrences - SAME as Future tab
+    // Use ONLY SubscriptionManager.upcomingTransactions (single source of truth)
     private var scheduledOccurrences: [Transaction] {
         let calendar = Calendar.current
         let today = Date()
-        let endDate = calendar.date(byAdding: .year, value: 1, to: today) ?? today
+        let todayStart = calendar.startOfDay(for: today)
+        let ninetyDaysAgo = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -90, to: today) ?? today)
         
-        var allOccurrences: [Transaction] = []
-        
-        for payment in filteredSubscriptions {
-            let occurrences = generateScheduledOccurrences(from: payment, endDate: endDate)
-            allOccurrences.append(contentsOf: occurrences)
-        }
-        
-        return allOccurrences
-            .filter { $0.date > today }
+        // Use ONLY upcomingTransactions - this is the single source of truth
+        return manager.upcomingTransactions
+            .filter { transaction in
+                // Filter by income/expense mode
+                let matchesMode = (selectedMode == .income && transaction.type == .income) ||
+                                 (selectedMode == .expenses && transaction.type == .expense)
+                
+                // Include if: matches mode AND (within last 90 days OR today/future)
+                let transactionDateStart = calendar.startOfDay(for: transaction.date)
+                let isRecentOrFuture = transactionDateStart >= ninetyDaysAgo || transactionDateStart >= todayStart
+                
+                return matchesMode && isRecentOrFuture
+            }
             .sorted { $0.date < $1.date }
     }
     
     // Group subscriptions and scheduled occurrences by month
+    // CRITICAL: This shows the SAME data as the Future tab - they are synchronized
     private var groupedByMonth: [(monthKey: String, monthStart: Date, items: [Any])] {
         let calendar = Calendar.current
         var allItems: [(date: Date, item: Any)] = []
         
-        // Add original PlannedPayments (non-repeating or first occurrence)
-        // Note: filteredSubscriptions already excludes payments with date >= endDate
-        for subscription in filteredSubscriptions {
-            let date = calendar.startOfDay(for: subscription.date)
-            let today = calendar.startOfDay(for: Date())
-            
-            // For repeating payments, only show the original if it's the first occurrence
-            // and hasn't been terminated (already filtered by filteredSubscriptions)
-            // For non-repeating payments, always show them
-            if !subscription.isRepeating || date <= today {
-                allItems.append((date: date, item: subscription))
-            }
-        }
-        
         // Add scheduled occurrences (future transactions from repeating payments)
+        // This is the SAME data shown in Transactions > Future tab
         for transaction in scheduledOccurrences {
             let date = calendar.startOfDay(for: transaction.date)
             allItems.append((date: date, item: transaction))
@@ -108,22 +104,9 @@ struct SubscriptionsView: View {
         
         return grouped
             .map { (monthKey: $0.key, monthStart: calendar.date(from: calendar.dateComponents([.year, .month], from: $0.value.first?.date ?? Date())) ?? Date(), items: $0.value.map { $0.item }.sorted { item1, item2 in
-                let date1: Date
-                let date2: Date
-                if let t1 = item1 as? Transaction {
-                    date1 = t1.date
-                } else if let p1 = item1 as? PlannedPayment {
-                    date1 = p1.date
-                } else {
-                    date1 = Date()
-                }
-                if let t2 = item2 as? Transaction {
-                    date2 = t2.date
-                } else if let p2 = item2 as? PlannedPayment {
-                    date2 = p2.date
-                } else {
-                    date2 = Date()
-                }
+                // Items can be Transactions (scheduled occurrences) or PlannedPayments
+                let date1: Date = (item1 as? Transaction)?.date ?? (item1 as? PlannedPayment)?.date ?? Date()
+                let date2: Date = (item2 as? Transaction)?.date ?? (item2 as? PlannedPayment)?.date ?? Date()
                 return date1 < date2
             }) }
             .sorted { $0.monthStart < $1.monthStart }
@@ -284,17 +267,17 @@ struct SubscriptionsView: View {
                                 // Items for this month (only show if expanded)
                                 if isMonthExpanded(monthGroup.monthKey) {
                                     // Group items by day within the month
+                                    // Items can be Transactions (scheduled occurrences) - SAME as Future tab
                                     let calendar = Calendar.current
                                     let dayGrouped = Dictionary(grouping: monthGroup.items) { item -> Date in
-                                        let date: Date
-                                        if let t = item as? Transaction {
-                                            date = t.date
-                                        } else if let p = item as? PlannedPayment {
-                                            date = p.date
+                                        // Handle both Transactions and PlannedPayments
+                                        if let transaction = item as? Transaction {
+                                            return calendar.startOfDay(for: transaction.date)
+                                        } else if let payment = item as? PlannedPayment {
+                                            return calendar.startOfDay(for: payment.date)
                                         } else {
-                                            date = Date()
+                                            return Date()
                                         }
-                                        return calendar.startOfDay(for: date)
                                     }
                                     
                                     let sortedDays = dayGrouped.keys.sorted()
@@ -307,10 +290,11 @@ struct SubscriptionsView: View {
                                                 .padding(.top, dayIndex == 0 ? 0 : 12)
                                                 .padding(.bottom, 4)
                                             
-                                            // Items for this day
+                                            // Items for this day (Transactions and PlannedPayments - SAME as Future tab)
                                             ForEach(Array(dayGrouped[day]?.enumerated() ?? [].enumerated()), id: \.offset) { itemIndex, item in
                                                 if let transaction = item as? Transaction {
-                                                    // Scheduled occurrence - editable (opens PlannedPayment editor) and deletable
+                                                    // Scheduled transaction - SAME rendering as Future tab
+                                                    // Editable (opens PlannedPayment editor) and deletable
                                                     Button {
                                                         // Find and open the source PlannedPayment for editing
                                                         if let sourcePayment = findSourcePlannedPayment(for: transaction) {
@@ -321,15 +305,15 @@ struct SubscriptionsView: View {
                                                             .opacity(0.8) // Slightly dimmed to indicate scheduled
                                                     }
                                                     .buttonStyle(.plain)
-                                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                            Button(role: .destructive) {
-                                                // Show confirmation alert for scheduled transaction deletion
-                                                scheduledTransactionToDelete = transaction
-                                                showDeleteScheduledAlert = true
-                                            } label: {
-                                                Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
-                                            }
-                                        }
+                                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                                        Button(role: .destructive) {
+                                                            // Show confirmation alert for scheduled transaction deletion
+                                                            scheduledTransactionToDelete = transaction
+                                                            showDeleteScheduledAlert = true
+                                                        } label: {
+                                                            Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
+                                                        }
+                                                    }
                                                     .padding(.bottom, 8)
                                                 } else if let subscription = item as? PlannedPayment {
                                                     // Original PlannedPayment
@@ -372,6 +356,9 @@ struct SubscriptionsView: View {
                     }
                     // Reset scroll position when view appears
                     proxy.scrollTo("top", anchor: .top)
+                    // Clean up old transactions and regenerate
+                    manager.cleanupOldTransactions(in: transactionManager)
+                    manager.generateUpcomingTransactions()
                 }
             }
             
@@ -466,68 +453,130 @@ struct SubscriptionsView: View {
                 plannedPaymentToDelete = nil
             }
         } message: {
-            Text(String(localized: "Delete only this occurrence or delete all future repeats?", comment: "Delete scheduled transaction confirmation message"))
+            Text(String(localized: "Delete only this occurrence or the entire chain of future repeats?", comment: "Delete scheduled transaction confirmation message"))
         }
     }
     
     // MARK: - Delete Handlers
     
+    // MARK: - Unified Deletion Handlers (REQUIREMENT D & E)
+    // These use the shared SubscriptionManager functions for consistent behavior
+    
     // Handle delete all future scheduled payments (terminate chain from this date forward)
     private func handleDeleteAllFuture(_ transaction: Transaction) {
-        if let sourcePayment = findSourcePlannedPayment(for: transaction) {
-            // Set endDate to the day before the selected occurrence date
-            // This stops generation from this occurrence forward
+        // Use unified deletion function (REQUIREMENT D)
+        var subscriptionId: UUID?
+        var transactionDate: Date?
+        
+        if let id = transaction.sourcePlannedPaymentId {
+            subscriptionId = id
             let calendar = Calendar.current
-            let transactionDate = calendar.startOfDay(for: transaction.date)
-            if let endDate = calendar.date(byAdding: .day, value: -1, to: transactionDate) {
-                manager.setEndDate(for: sourcePayment, endDate: endDate)
+            transactionDate = calendar.startOfDay(for: transaction.date)
+        } else if let sourcePayment = findSourcePlannedPayment(for: transaction) {
+            // Fallback for legacy transactions
+            subscriptionId = sourcePayment.id
+            let calendar = Calendar.current
+            transactionDate = calendar.startOfDay(for: transaction.date)
+        }
+        
+        if let id = subscriptionId, let date = transactionDate {
+            // REQUIREMENT E.2: Delete all occurrences with date >= transactionDate
+            manager.deleteAllFuture(subscriptionId: id, fromDate: date)
+            // Force UI refresh in both Planned and Future tabs
+            manager.objectWillChange.send()
+            // Regenerate to ensure both tabs see the update immediately
+            manager.generateUpcomingTransactions()
+            
+            // CRITICAL: Also remove all matching transactions from TransactionManager
+            // This handles old subscription transactions that were saved before the refactoring
+            let calendar = Calendar.current
+            let transactionDateStart = calendar.startOfDay(for: transaction.date)
+            let matchingTransactions = transactionManager.transactions.filter { txn in
+                // Check if this transaction matches the subscription pattern
+                if let sourceId = txn.sourcePlannedPaymentId, sourceId == id {
+                    let txnDateStart = calendar.startOfDay(for: txn.date)
+                    return txnDateStart >= transactionDateStart
+                } else if let sourcePayment = findSourcePlannedPayment(for: txn), sourcePayment.id == id {
+                    let txnDateStart = calendar.startOfDay(for: txn.date)
+                    return txnDateStart >= transactionDateStart
+                }
+                return false
+            }
+            
+            for matchingTransaction in matchingTransactions {
+                transactionManager.deleteTransaction(matchingTransaction)
             }
         }
+        
         scheduledTransactionToDelete = nil
         plannedPaymentToDelete = nil
     }
     
     // Handle delete all future for a PlannedPayment directly (terminate chain from payment's date forward)
     private func handleDeleteAllFutureForPayment(_ payment: PlannedPayment) {
-        // Set endDate to the day before the payment's start date
-        // This stops generation from this payment's date forward
-        // If payment date is in the past, set endDate to yesterday to preserve past transactions
+        // Use unified deletion function (REQUIREMENT D)
         let calendar = Calendar.current
         let paymentDate = calendar.startOfDay(for: payment.date)
         let today = calendar.startOfDay(for: Date())
         
-        let endDate: Date
-        if paymentDate >= today {
-            // Payment date is in the future, terminate from that date
-            endDate = calendar.date(byAdding: .day, value: -1, to: paymentDate) ?? paymentDate
-        } else {
-            // Payment date is in the past, terminate from today (preserve past transactions)
-            endDate = calendar.date(byAdding: .day, value: -1, to: today) ?? today
-        }
+        // If payment date is in the past, terminate from today to preserve past transactions
+        let fromDate = paymentDate >= today ? paymentDate : today
+        manager.deleteAllFuture(subscriptionId: payment.id, fromDate: fromDate)
+        // Force UI refresh in both Planned and Future tabs
+        manager.objectWillChange.send()
+        // Regenerate to ensure both tabs see the update immediately
+        manager.generateUpcomingTransactions()
         
-        manager.setEndDate(for: payment, endDate: endDate)
         scheduledTransactionToDelete = nil
         plannedPaymentToDelete = nil
     }
     
     // Handle delete only this occurrence
     private func handleDeleteOnlyThisScheduled(_ transaction: Transaction) {
-        if let sourcePayment = findSourcePlannedPayment(for: transaction) {
-            // Add this date to skipped dates
+        // Use unified deletion function (REQUIREMENT D)
+        var subscriptionId: UUID?
+        var transactionDate: Date?
+        
+        if let id = transaction.sourcePlannedPaymentId {
+            subscriptionId = id
             let calendar = Calendar.current
-            let transactionDate = calendar.startOfDay(for: transaction.date)
-            manager.skipDate(for: sourcePayment, date: transactionDate)
+            transactionDate = calendar.startOfDay(for: transaction.date)
+        } else if let sourcePayment = findSourcePlannedPayment(for: transaction) {
+            // Fallback for legacy transactions
+            subscriptionId = sourcePayment.id
+            let calendar = Calendar.current
+            transactionDate = calendar.startOfDay(for: transaction.date)
         }
+        
+        if let id = subscriptionId, let date = transactionDate {
+            manager.deleteOccurrence(subscriptionId: id, occurrenceDate: date)
+            // Force UI refresh in both Planned and Future tabs
+            manager.objectWillChange.send()
+            // Regenerate to ensure both tabs see the update immediately
+            manager.generateUpcomingTransactions()
+            
+            // CRITICAL: Also remove the transaction from TransactionManager if it exists there
+            // This handles old subscription transactions that were saved before the refactoring
+            if transactionManager.transactions.contains(where: { $0.id == transaction.id }) {
+                transactionManager.deleteTransaction(transaction)
+            }
+        }
+        
         scheduledTransactionToDelete = nil
         plannedPaymentToDelete = nil
     }
     
     // Handle delete only this occurrence for a PlannedPayment directly
     private func handleDeleteOnlyThisPlannedPayment(_ payment: PlannedPayment) {
-        // Skip the payment's start date (the first occurrence)
+        // Use unified deletion function (REQUIREMENT D)
         let calendar = Calendar.current
         let paymentDate = calendar.startOfDay(for: payment.date)
-        manager.skipDate(for: payment, date: paymentDate)
+        manager.deleteOccurrence(subscriptionId: payment.id, occurrenceDate: paymentDate)
+        // Force UI refresh in both Planned and Future tabs
+        manager.objectWillChange.send()
+        // Regenerate to ensure both tabs see the update immediately
+        manager.generateUpcomingTransactions()
+        
         scheduledTransactionToDelete = nil
         plannedPaymentToDelete = nil
     }
