@@ -582,82 +582,33 @@ struct DashboardView: View {
     }
     
     
+    // Standardized Floating Action Button
     private var floatingActionButton: some View {
-        ZStack {
-            if showActionMenu {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            showActionMenu = false
-                        }
-                    }
-            }
-            
         VStack {
+            Spacer()
+            HStack {
                 Spacer()
-                HStack {
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 12) {
-                        if showActionMenu {
-                            ForEach(actionOptions) { option in
-                                Button {
-                                    startAddingTransaction(for: option.type)
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        Text(option.title)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(.primary)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
-                                            .background(.thinMaterial)
-                                            .clipShape(Capsule())
-                                        Image(systemName: option.icon)
-                                            .font(.title3)
-                                            .foregroundStyle(.white)
-                                            .frame(width: 52, height: 52)
-                                            .background(
-                                                LinearGradient(
-                                                    colors: [option.tint.opacity(0.9), option.tint],
-                                                    startPoint: .topLeading,
-                                                    endPoint: .bottomTrailing
-                                                )
-                                            )
-                                            .clipShape(Circle())
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                                .scaleEffect(showActionMenu ? 1 : 0.7, anchor: .trailing)
-                            }
-                        }
-                        
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                showActionMenu.toggle()
-                            }
-                        } label: {
-                            Image(systemName: showActionMenu ? "xmark" : "plus")
-                                .font(.title2.weight(.bold))
-                                .rotationEffect(.degrees(showActionMenu ? 45 : 0))
-                                .foregroundStyle(.white)
-                                .frame(width: 60, height: 60)
-                                .background(Color.accentColor)
-                                .clipShape(Circle())
-                                .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
-                        }
-                    }
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 100)
+                
+                // --- BUTTON ---
+                Button {
+                    startAddingTransaction(for: .expense)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56) // Fixed standard size
+                        .background(
+                            Circle()
+                                .fill(Color.accentColor) // <--- Change this per view
+                                .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 6)
+                        )
                 }
+                // ----------------
             }
+            .padding(.trailing, 20) // Fixed right margin
+            .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea() // CRITICAL: Pins button relative to screen edge, ignoring layout differences
     }
     
     private func startAddingTransaction(for type: TransactionType) {
@@ -665,9 +616,6 @@ struct DashboardView: View {
         let firstAccountName = accountManager.accounts.first?.name ?? ""
         draftTransaction = TransactionDraft(type: type, currency: settings.currency, accountName: firstAccountName)
         showTransactionForm = true
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            showActionMenu = false
-        }
     }
     
     private func handleSave(_ draft: TransactionDraft) {

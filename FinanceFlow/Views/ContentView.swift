@@ -510,11 +510,14 @@ struct DebtsView: View {
         .padding(.vertical, 12)
     }
     
+    // Standardized Floating Action Button
     private var floatingActionButton: some View {
         VStack {
             Spacer()
             HStack {
                 Spacer()
+                
+                // --- BUTTON ---
                 Button {
                     selectedContact = nil
                     showDebtForm = true
@@ -522,16 +525,19 @@ struct DebtsView: View {
                     Image(systemName: "plus")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.white)
-                        .frame(width: 60, height: 60)
-                        .background(Color.accentColor)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
+                        .frame(width: 56, height: 56) // Fixed standard size
+                        .background(
+                            Circle()
+                                .fill(Color.orange) // <--- Change this per view
+                                .shadow(color: Color.orange.opacity(0.3), radius: 8, x: 0, y: 6)
+                        )
                 }
-                .padding(.trailing, 24)
-                .padding(.bottom, 100)
+                // ----------------
             }
+            .padding(.trailing, 20) // Fixed right margin
+            .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea() // CRITICAL: Pins button relative to screen edge, ignoring layout differences
     }
     
     private func handleSave(contact: Contact, transaction: DebtTransaction) {
@@ -1401,6 +1407,7 @@ struct TransactionsView: View {
     @State private var showPlannedPayments = false
     @State private var selectedTab: TransactionTab = .past
     @State private var selectedPlannedPayment: PlannedPayment? // For editing scheduled transactions
+    @State private var selectedOccurrenceDate: Date? // The specific occurrence date when paying early
     @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
     @State private var plannedPaymentToDeleteFromEdit: PlannedPayment? // For delete confirmation from edit form
     @State private var showDeleteScheduledAlert = false
@@ -1851,6 +1858,8 @@ struct TransactionsView: View {
                                                 ForEach(groupedScheduled[day] ?? [], id: \.id) { transaction in
                                                     // ALL transactions here are scheduled (from upcomingTransactions)
                                                     Button {
+                                                        // Capture the occurrence date before opening the form
+                                                        selectedOccurrenceDate = transaction.occurrenceDate ?? transaction.date
                                                         // Find and open the source PlannedPayment for editing
                                                         if let sourcePayment = findSourcePlannedPayment(for: transaction) {
                                                             selectedPlannedPayment = sourcePayment
@@ -2003,12 +2012,15 @@ struct TransactionsView: View {
                     paymentType: payment.type,
                     existingPayment: payment,
                     initialIsIncome: payment.isIncome,
+                    occurrenceDate: selectedOccurrenceDate,
                     onSave: { updatedPayment in
                         subscriptionManager.updateSubscription(updatedPayment)
                         selectedPlannedPayment = nil
+                        selectedOccurrenceDate = nil
                     },
                     onCancel: {
                         selectedPlannedPayment = nil
+                        selectedOccurrenceDate = nil
                     },
                     onDelete: { paymentToDelete in
                         // If it's a repeating payment, show confirmation modal
@@ -2016,11 +2028,19 @@ struct TransactionsView: View {
                             plannedPaymentToDeleteFromEdit = paymentToDelete
                             showDeleteScheduledAlert = true
                             selectedPlannedPayment = nil
+                            selectedOccurrenceDate = nil
                         } else {
                             // Non-repeating, delete directly
                             subscriptionManager.deleteSubscription(paymentToDelete)
                             selectedPlannedPayment = nil
+                            selectedOccurrenceDate = nil
                         }
+                    },
+                    onPay: { occurrenceDate in
+                        // Pay early: create transaction and skip the occurrence
+                        subscriptionManager.payEarly(subscription: payment, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
+                        selectedPlannedPayment = nil
+                        selectedOccurrenceDate = nil
                     }
                 )
                 .environmentObject(settings)
@@ -2239,82 +2259,33 @@ struct TransactionsView: View {
         .buttonStyle(.plain)
     }
     
+    // Standardized Floating Action Button
     private var floatingActionButton: some View {
-        ZStack {
-            if showActionMenu {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            showActionMenu = false
-                        }
-                    }
-            }
-            
-            VStack {
+        VStack {
+            Spacer()
+            HStack {
                 Spacer()
-                HStack {
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 12) {
-                        if showActionMenu {
-                            ForEach(actionOptions) { option in
-                                Button {
-                                    startAddingTransaction(for: option.type)
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        Text(option.title)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(.primary)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
-                                            .background(.thinMaterial)
-                                            .clipShape(Capsule())
-                                        Image(systemName: option.icon)
-                                            .font(.title3)
-                                            .foregroundStyle(.white)
-                                            .frame(width: 52, height: 52)
-                                            .background(
-                                                LinearGradient(
-                                                    colors: [option.tint.opacity(0.9), option.tint],
-                                                    startPoint: .topLeading,
-                                                    endPoint: .bottomTrailing
-                                                )
-                                            )
-                                            .clipShape(Circle())
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                                .scaleEffect(showActionMenu ? 1 : 0.7, anchor: .trailing)
-                            }
-                        }
-                        
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                showActionMenu.toggle()
-                            }
-                        } label: {
-                            Image(systemName: showActionMenu ? "xmark" : "plus")
-                                .font(.title2.weight(.bold))
-                                .rotationEffect(.degrees(showActionMenu ? 45 : 0))
-                                .foregroundStyle(.white)
-                                .frame(width: 60, height: 60)
-                                .background(Color.accentColor)
-                                .clipShape(Circle())
-                                .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
-                        }
-                    }
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 100)
+                
+                // --- BUTTON ---
+                Button {
+                    startAddingTransaction(for: .expense)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56) // Fixed standard size
+                        .background(
+                            Circle()
+                                .fill(Color.accentColor) // <--- Change this per view
+                                .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 6)
+                        )
                 }
+                // ----------------
             }
+            .padding(.trailing, 20) // Fixed right margin
+            .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea() // CRITICAL: Pins button relative to screen edge, ignoring layout differences
     }
     
     private var emptyTransactionsState: some View {
@@ -2394,9 +2365,6 @@ struct TransactionsView: View {
         let firstAccountName = accountManager.accounts.first?.name ?? ""
         draftTransaction = TransactionDraft(type: type, currency: settings.currency, accountName: firstAccountName)
         showTransactionForm = true
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            showActionMenu = false
-        }
     }
     
     private func startEditing(_ transaction: Transaction) {

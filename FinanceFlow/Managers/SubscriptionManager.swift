@@ -77,12 +77,37 @@ class SubscriptionManager: ObservableObject {
     /// Calculates total monthly burn (expenses) for the current financial period
     func totalMonthlyBurn(startDay: Int) -> Double {
         let period = DateRangeHelper.currentPeriod(for: startDay)
+        let calendar = Calendar.current
+        
         return subscriptions
             .filter { subscription in
-                subscription.status == .upcoming &&
-                !subscription.isIncome &&
-                subscription.date >= period.start &&
-                subscription.date < period.end
+                // 1. Basic checks (Status, Type, Date Range)
+                guard subscription.status == .upcoming,
+                      !subscription.isIncome,
+                      subscription.date >= period.start,
+                      subscription.date < period.end else {
+                    return false
+                }
+                
+                // 2. Check Termination (Delete All Future)
+                // If the scheduled date is strictly after the end date, ignore it.
+                if let endDate = subscription.endDate {
+                    let dateStart = calendar.startOfDay(for: subscription.date)
+                    let endDateStart = calendar.startOfDay(for: endDate)
+                    if dateStart > endDateStart {
+                        return false
+                    }
+                }
+                
+                // 3. Check Skipped (Delete Only This)
+                // If the scheduled date is in the skipped list, ignore it.
+                if let skipped = subscription.skippedDates {
+                    if skipped.contains(where: { calendar.isDate($0, inSameDayAs: subscription.date) }) {
+                        return false
+                    }
+                }
+                
+                return true
             }
             .map(\.amount)
             .reduce(0, +)
@@ -91,12 +116,37 @@ class SubscriptionManager: ObservableObject {
     /// Calculates total monthly income for the current financial period
     func totalMonthlyIncome(startDay: Int) -> Double {
         let period = DateRangeHelper.currentPeriod(for: startDay)
+        let calendar = Calendar.current
+        
         return subscriptions
             .filter { subscription in
-                subscription.status == .upcoming &&
-                subscription.isIncome &&
-                subscription.date >= period.start &&
-                subscription.date < period.end
+                // 1. Basic checks (Status, Type, Date Range)
+                guard subscription.status == .upcoming,
+                      subscription.isIncome,
+                      subscription.date >= period.start,
+                      subscription.date < period.end else {
+                    return false
+                }
+                
+                // 2. Check Termination (Delete All Future)
+                // If the scheduled date is strictly after the end date, ignore it.
+                if let endDate = subscription.endDate {
+                    let dateStart = calendar.startOfDay(for: subscription.date)
+                    let endDateStart = calendar.startOfDay(for: endDate)
+                    if dateStart > endDateStart {
+                        return false
+                    }
+                }
+                
+                // 3. Check Skipped (Delete Only This)
+                // If the scheduled date is in the skipped list, ignore it.
+                if let skipped = subscription.skippedDates {
+                    if skipped.contains(where: { calendar.isDate($0, inSameDayAs: subscription.date) }) {
+                        return false
+                    }
+                }
+                
+                return true
             }
             .map(\.amount)
             .reduce(0, +)
@@ -115,10 +165,36 @@ class SubscriptionManager: ObservableObject {
     /// Active subscriptions count within the current financial period
     func activeSubscriptionsCount(startDay: Int) -> Int {
         let period = DateRangeHelper.currentPeriod(for: startDay)
+        let calendar = Calendar.current
+        
         return subscriptions.filter { subscription in
-            subscription.status == .upcoming &&
-            subscription.date >= period.start &&
-            subscription.date < period.end
+            // 1. Basic checks (Status, Date Range)
+            // Note: Count both income and expenses, or strictly expenses depending on UI intent. 
+            // Usually dashboard counts all active items.
+            guard subscription.status == .upcoming,
+                  subscription.date >= period.start,
+                  subscription.date < period.end else {
+                return false
+            }
+            
+            // 2. Check Termination (Delete All Future)
+            // If the scheduled date is strictly after the end date, the subscription is dead.
+            if let endDate = subscription.endDate {
+                let dateStart = calendar.startOfDay(for: subscription.date)
+                let endDateStart = calendar.startOfDay(for: endDate)
+                if dateStart > endDateStart {
+                    return false
+                }
+            }
+            
+            // 3. Check Skipped (Delete Only This)
+            if let skipped = subscription.skippedDates {
+                if skipped.contains(where: { calendar.isDate($0, inSameDayAs: subscription.date) }) {
+                    return false
+                }
+            }
+            
+            return true
         }.count
     }
     
@@ -145,6 +221,41 @@ class SubscriptionManager: ObservableObject {
     
     func subscriptions(isIncome: Bool) -> [PlannedPayment] {
         subscriptions.filter { $0.isIncome == isIncome }
+    }
+    
+    // MARK: - Pay Early Feature
+    
+    /// Pay a subscription early by creating a real transaction and skipping the scheduled occurrence
+    /// - Parameters:
+    ///   - subscription: The subscription to pay early
+    ///   - occurrenceDate: The specific date of the occurrence to pay (and skip)
+    ///   - transactionManager: The transaction manager to add the new transaction to
+    func payEarly(subscription: PlannedPayment, occurrenceDate: Date, transactionManager: TransactionManager) {
+        // Create a new transaction with today's date
+        let newTransaction = Transaction(
+            id: UUID(),
+            title: subscription.title,
+            category: subscription.category ?? "General",
+            amount: subscription.amount,
+            date: Date(), // Pay now, not on the scheduled date
+            type: subscription.isIncome ? .income : .expense,
+            accountName: subscription.accountName,
+            toAccountName: nil,
+            currency: UserDefaults.standard.string(forKey: "mainCurrency") ?? "USD",
+            sourcePlannedPaymentId: subscription.id,
+            occurrenceDate: occurrenceDate // Store the original occurrence date
+        )
+        
+        // Add the transaction to TransactionManager
+        transactionManager.addTransaction(newTransaction)
+        
+        // Skip the scheduled occurrence so it disappears from the "Future" list
+        skipDate(for: subscription, date: occurrenceDate)
+        
+        // Force UI refresh
+        DispatchQueue.main.async { [weak self] in
+            self?.objectWillChange.send()
+        }
     }
     
     // Skip a specific date for a repeating payment

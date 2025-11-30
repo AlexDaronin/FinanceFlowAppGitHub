@@ -87,26 +87,32 @@ struct CreditsView: View {
                 }
             }
             
-            // Top Layer: Floating Action Button (pinned to bottom-right)
+            // Standardized Floating Action Button
             VStack {
                 Spacer()
                 HStack {
                     Spacer()
+                    
+                    // --- BUTTON ---
                     Button {
                         showAddSheet = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.title2.bold())
-                            .foregroundColor(.white)
-                            .frame(width: 56, height: 56)
-                            .background(Color.blue)
-                            .clipShape(Circle())
-                            .shadow(color: .blue.opacity(0.3), radius: 8, y: 6)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 56, height: 56) // Fixed standard size
+                            .background(
+                                Circle()
+                                    .fill(Color.red) // <--- Change this per view
+                                    .shadow(color: Color.red.opacity(0.3), radius: 8, x: 0, y: 6)
+                            )
                     }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 20)
+                    // ----------------
                 }
+                .padding(.trailing, 20) // Fixed right margin
+                .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
             }
+            .ignoresSafeArea() // CRITICAL: Pins button relative to screen edge, ignoring layout differences
         }
         .navigationTitle(Text("Credits & Loans", comment: "Credits view title"))
         .sheet(isPresented: $showAddSheet) {

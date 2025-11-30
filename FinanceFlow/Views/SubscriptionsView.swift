@@ -29,6 +29,7 @@ struct SubscriptionsView: View {
     @EnvironmentObject var transactionManager: TransactionManager
     @State private var showAddSheet = false
     @State private var selectedSubscription: PlannedPayment?
+    @State private var selectedOccurrenceDate: Date? // The specific occurrence date when paying early
     @State private var selectedMode: SubscriptionMode = .expenses
     @State private var expandedMonths: Set<String> = [] // Track which months are expanded
     @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
@@ -296,6 +297,8 @@ struct SubscriptionsView: View {
                                                     // Scheduled transaction - SAME rendering as Future tab
                                                     // Editable (opens PlannedPayment editor) and deletable
                                                     Button {
+                                                        // Capture the occurrence date before opening the form
+                                                        selectedOccurrenceDate = transaction.occurrenceDate ?? transaction.date
                                                         // Find and open the source PlannedPayment for editing
                                                         if let sourcePayment = findSourcePlannedPayment(for: transaction) {
                                                             selectedSubscription = sourcePayment
@@ -318,6 +321,8 @@ struct SubscriptionsView: View {
                                                 } else if let subscription = item as? PlannedPayment {
                                                     // Original PlannedPayment
                                                     Button {
+                                                        // For non-repeating payments, use the payment's date as occurrence date
+                                                        selectedOccurrenceDate = subscription.date
                                                         selectedSubscription = subscription
                                                     } label: {
                                                         SubscriptionRow(subscription: subscription)
@@ -362,26 +367,32 @@ struct SubscriptionsView: View {
                 }
             }
             
-            // Top Layer: Floating Action Button (pinned to bottom-right)
+            // Standardized Floating Action Button
             VStack {
                 Spacer()
                 HStack {
                     Spacer()
+                    
+                    // --- BUTTON ---
                     Button {
                         showAddSheet = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.title2.bold())
-                            .foregroundColor(.white)
-                            .frame(width: 56, height: 56)
-                            .background(Color.blue)
-                            .clipShape(Circle())
-                            .shadow(color: .blue.opacity(0.3), radius: 8, y: 6)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 56, height: 56) // Fixed standard size
+                            .background(
+                                Circle()
+                                    .fill(Color.purple) // <--- Change this per view
+                                    .shadow(color: Color.purple.opacity(0.3), radius: 8, x: 0, y: 6)
+                            )
                     }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 20)
+                    // ----------------
                 }
+                .padding(.trailing, 20) // Fixed right margin
+                .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
             }
+            .ignoresSafeArea() // CRITICAL: Pins button relative to screen edge, ignoring layout differences
         }
         .navigationTitle(Text("Subscriptions", comment: "Subscriptions view title"))
         .sheet(isPresented: $showAddSheet) {
@@ -405,12 +416,15 @@ struct SubscriptionsView: View {
                 paymentType: .subscription,
                 existingPayment: subscription,
                 initialIsIncome: subscription.isIncome,
+                occurrenceDate: selectedOccurrenceDate,
                 onSave: { updatedSubscription in
                     manager.updateSubscription(updatedSubscription)
                     selectedSubscription = nil
+                    selectedOccurrenceDate = nil
                 },
                 onCancel: {
                     selectedSubscription = nil
+                    selectedOccurrenceDate = nil
                 },
                 onDelete: { paymentToDelete in
                     // If it's a repeating payment, show confirmation modal
@@ -418,11 +432,19 @@ struct SubscriptionsView: View {
                         plannedPaymentToDelete = paymentToDelete
                         showDeleteScheduledAlert = true
                         selectedSubscription = nil
+                        selectedOccurrenceDate = nil
                     } else {
                         // Non-repeating, delete directly
                         manager.deleteSubscription(paymentToDelete)
                         selectedSubscription = nil
+                        selectedOccurrenceDate = nil
                     }
+                },
+                onPay: { occurrenceDate in
+                    // Pay early: create transaction and skip the occurrence
+                    manager.payEarly(subscription: subscription, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
+                    selectedSubscription = nil
+                    selectedOccurrenceDate = nil
                 }
             )
             .environmentObject(settings)
@@ -998,9 +1020,11 @@ struct CustomSubscriptionFormView: View {
     let paymentType: PlannedPaymentType
     let existingPayment: PlannedPayment?
     let initialIsIncome: Bool
+    let occurrenceDate: Date? // The specific occurrence date being paid (if paying early)
     let onSave: (PlannedPayment) -> Void
     let onCancel: () -> Void
     let onDelete: ((PlannedPayment) -> Void)?
+    let onPay: ((Date) -> Void)? // Callback for paying early
     
     @State private var title: String = ""
     @State private var amount: Double = 0
@@ -1008,9 +1032,11 @@ struct CustomSubscriptionFormView: View {
     @State private var date: Date = Date()
     @State private var accountName: String = "Main Card"
     @State private var selectedCategory: Category? = nil
+    @State private var selectedCategoryName: String = "" // Store the full category name (may include "Parent > Child")
     @State private var isIncome: Bool = false
     @State private var showCategoryPicker = false
     @State private var showAccountPicker = false
+    @State private var expandedCategories: Set<UUID> = [] // Track expanded categories for subcategory picker
     
     // Repetition settings
     @State private var isRepeating: Bool = false
@@ -1078,16 +1104,20 @@ struct CustomSubscriptionFormView: View {
         paymentType: PlannedPaymentType,
         existingPayment: PlannedPayment? = nil,
         initialIsIncome: Bool = false,
+        occurrenceDate: Date? = nil,
         onSave: @escaping (PlannedPayment) -> Void,
         onCancel: @escaping () -> Void,
-        onDelete: ((PlannedPayment) -> Void)? = nil
+        onDelete: ((PlannedPayment) -> Void)? = nil,
+        onPay: ((Date) -> Void)? = nil
     ) {
         self.paymentType = paymentType
         self.existingPayment = existingPayment
         self.initialIsIncome = initialIsIncome
+        self.occurrenceDate = occurrenceDate
         self.onSave = onSave
         self.onCancel = onCancel
         self.onDelete = onDelete
+        self.onPay = onPay
         
         if let existing = existingPayment {
             _title = State(initialValue: existing.title)
@@ -1143,7 +1173,7 @@ struct CustomSubscriptionFormView: View {
                                 icon: "tag",
                                 title: String(localized: "Category", comment: "Category field label"),
                                 category: selectedCategory,
-                                categoryName: selectedCategory?.name ?? "",
+                                categoryName: selectedCategoryName.isEmpty ? (selectedCategory?.name ?? "") : selectedCategoryName,
                                 placeholder: String(localized: "Select Category", comment: "Category placeholder"),
                                 onTap: { showCategoryPicker = true }
                             )
@@ -1170,6 +1200,27 @@ struct CustomSubscriptionFormView: View {
                         repetitionSection
                             .padding(.horizontal)
                         
+                        // Pay Early Button (only show if occurrenceDate is set and existingPayment exists)
+                        if let occurrenceDate = occurrenceDate, existingPayment != nil, let onPay = onPay {
+                            Button {
+                                onPay(occurrenceDate)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.headline)
+                                    Text("\(String(localized: "Pay", comment: "Pay early button")) \(currencyString(amount, code: settings.currency))")
+                                        .font(.headline)
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(Color.green)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                        }
+                        
                         // Save Button
                         Button {
                             // Calculate next payment date based on repetition settings
@@ -1190,7 +1241,7 @@ struct CustomSubscriptionFormView: View {
                                 date: nextDate,
                                 status: existingPayment?.status ?? .upcoming,
                                 accountName: accountName,
-                                category: selectedCategory?.name,
+                                category: selectedCategoryName.isEmpty ? selectedCategory?.name : selectedCategoryName,
                                 type: paymentType,
                                 isIncome: isIncome,
                                 isRepeating: isRepeating,
@@ -1257,9 +1308,20 @@ struct CustomSubscriptionFormView: View {
                     accountName = accounts.first?.name ?? "Main Card"
                 }
                 // Initialize category
-                if let categoryName = existingPayment?.category,
-                   let category = availableCategories.first(where: { $0.name == categoryName }) {
-                    selectedCategory = category
+                if let categoryName = existingPayment?.category {
+                    selectedCategoryName = categoryName
+                    // Check if it's a subcategory (contains " > ")
+                    if categoryName.contains(" > ") {
+                        let parentName = String(categoryName.split(separator: " > ").first ?? "")
+                        if let category = availableCategories.first(where: { $0.name == parentName }) {
+                            selectedCategory = category
+                        }
+                    } else {
+                        // Regular category
+                        if let category = availableCategories.first(where: { $0.name == categoryName }) {
+                            selectedCategory = category
+                        }
+                    }
                 }
                 // Initialize repetition settings
                 if let existing = existingPayment {
@@ -1287,6 +1349,7 @@ struct CustomSubscriptionFormView: View {
             .onChange(of: isIncome) { oldValue, newValue in
                 // Clear category when switching type
                 selectedCategory = nil
+                selectedCategoryName = ""
             }
         }
         .presentationDetents([.large])
@@ -1504,36 +1567,103 @@ struct CustomSubscriptionFormView: View {
                         .padding(.top, 60)
                     } else {
                         ForEach(availableCategories) { category in
-                            Button {
-                                selectedCategory = category
-                                showCategoryPicker = false
-                            } label: {
-                                HStack(spacing: 16) {
-                                    ZStack {
-                                        Circle()
-                                            .fill(category.color.opacity(0.15))
-                                            .frame(width: 44, height: 44)
-                                        Image(systemName: category.iconName)
-                                            .font(.headline)
-                                            .foregroundStyle(category.color)
+                            VStack(spacing: 0) {
+                                // Parent Category Row
+                                Button {
+                                    if !category.subcategories.isEmpty {
+                                        // Toggle expansion for categories with subcategories
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                            if expandedCategories.contains(category.id) {
+                                                expandedCategories.remove(category.id)
+                                            } else {
+                                                expandedCategories.insert(category.id)
+                                            }
+                                        }
+                                    } else {
+                                        // No subcategories, select the category directly
+                                        selectedCategory = category
+                                        selectedCategoryName = category.name
+                                        showCategoryPicker = false
                                     }
-                                    
-                                    Text(category.name)
-                                        .font(.body)
-                                        .foregroundStyle(.primary)
-                                    
-                                    Spacer()
-                                    
-                                    if selectedCategory?.id == category.id {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(.blue)
+                                } label: {
+                                    HStack(spacing: 16) {
+                                        ZStack {
+                                            Circle()
+                                                .fill(category.color.opacity(0.15))
+                                                .frame(width: 44, height: 44)
+                                            Image(systemName: category.iconName)
+                                                .font(.headline)
+                                                .foregroundStyle(category.color)
+                                        }
+                                        
+                                        Text(category.name)
+                                            .font(.body)
+                                            .foregroundStyle(.primary)
+                                        
+                                        Spacer()
+                                        
+                                        if !category.subcategories.isEmpty {
+                                            // Show chevron for categories with subcategories
+                                            Image(systemName: expandedCategories.contains(category.id) ? "chevron.down" : "chevron.right")
+                                                .foregroundStyle(.secondary)
+                                                .font(.subheadline)
+                                        } else if selectedCategoryName == category.name || (selectedCategory?.id == category.id && selectedCategoryName.isEmpty) {
+                                            // Show checkmark if selected (category only, no subcategory)
+                                            Image(systemName: "checkmark")
+                                                .foregroundStyle(.blue)
+                                        }
                                     }
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 12)
+                                    .background(Color.customCardBackground)
                                 }
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 12)
-                                .background(Color.customCardBackground)
+                                .buttonStyle(.plain)
+                                
+                                // Subcategories (shown when expanded)
+                                if expandedCategories.contains(category.id) && !category.subcategories.isEmpty {
+                                    VStack(spacing: 0) {
+                                        ForEach(category.subcategories) { subcategory in
+                                            Divider()
+                                                .padding(.leading, 64)
+                                            
+                                            Button {
+                                                // Select subcategory: save combined name but use parent category for icon/color
+                                                selectedCategory = category
+                                                selectedCategoryName = "\(category.name) > \(subcategory.name)"
+                                                showCategoryPicker = false
+                                            } label: {
+                                                HStack(spacing: 12) {
+                                                    // Subcategory icon
+                                                    ZStack {
+                                                        Circle()
+                                                            .fill(category.color.opacity(0.15))
+                                                            .frame(width: 36, height: 36)
+                                                        Image(systemName: subcategory.iconName)
+                                                            .font(.subheadline)
+                                                            .foregroundStyle(category.color)
+                                                    }
+                                                    
+                                                    Text(subcategory.name)
+                                                        .font(.body)
+                                                        .foregroundStyle(.primary)
+                                                    
+                                                    Spacer()
+                                                    
+                                                    if selectedCategoryName == "\(category.name) > \(subcategory.name)" {
+                                                        Image(systemName: "checkmark")
+                                                            .foregroundStyle(.blue)
+                                                    }
+                                                }
+                                                .padding(.horizontal, 20)
+                                                .padding(.vertical, 12)
+                                                .background(Color.customSecondaryBackground)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                }
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
