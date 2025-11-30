@@ -256,29 +256,33 @@ class SubscriptionManager: ObservableObject {
             // Determine actual end date (use subscription's endDate if set)
             let actualEndDate = subscriptionEndDate ?? endDate
             
-            // CRITICAL: Always include first occurrence on startDate
-            // The first occurrence is special - always show it if it's within the generation window
-            // even if it's slightly in the past (up to 30 days), as it's the user's chosen start date
             let startDateStart = calendar.startOfDay(for: startDate)
             let todayStart = calendar.startOfDay(for: today)
             let actualEndDateStart = calendar.startOfDay(for: actualEndDate)
             
-            // Check if startDate is skipped
+            // Extract original day component from startDate for month/year frequencies
+            // This ensures we preserve the original day (e.g., 31st) across months
+            let originalDay = calendar.component(.day, from: startDate)
+            
+            // BUG FIX 1: Always include first occurrence on startDate
+            // The user expects the subscription to start on the day they selected
             let isStartDateSkipped = skippedDates.contains { skippedDate in
                 calendar.isDate(startDateStart, inSameDayAs: skippedDate)
             }
             
-            // CRITICAL: The first occurrence is the user's chosen start date
-            // ALWAYS include it if:
-            // 1. It's not skipped
-            // 2. It's within the endDate range (not terminated)
-            // We don't check if it's today/future/past - the first occurrence is special
-            // If the user chose November 30th as the start date, it should ALWAYS appear
             let isWithinEndDate = startDateStart <= actualEndDateStart
             
-            // Always include the first occurrence - it's the user's explicit choice
-            // This ensures November 30th (or any start date) always shows
-            if !isStartDateSkipped && isWithinEndDate {
+            // CRITICAL FIX: Always include first occurrence if it's today or in the future
+            // Use >= (inclusive) to ensure today is included
+            // Also include recent past (up to 90 days) to ensure visibility
+            let ninetyDaysAgo = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -90, to: today) ?? today)
+            let isTodayOrFuture = startDateStart >= todayStart
+            let isRecentPast = startDateStart >= ninetyDaysAgo && startDateStart < todayStart
+            
+            // Include if: (today or future) OR (recent past within 90 days)
+            let shouldIncludeFirst = isTodayOrFuture || isRecentPast
+            
+            if !isStartDateSkipped && isWithinEndDate && shouldIncludeFirst {
                 let transaction = Transaction(
                     id: Self.generateOccurrenceId(subscriptionId: subscription.id, occurrenceDate: startDate),
                     title: subscription.title,
@@ -295,12 +299,14 @@ class SubscriptionManager: ObservableObject {
                 allTransactions.append(transaction)
             }
             
-            // Generate subsequent occurrences: startDate + interval, startDate + 2×interval, etc.
+            // Generate subsequent occurrences
+            // BUG FIX 2: Preserve originalDay for month/year frequencies to prevent date drift
             var currentDate = calculateNextDate(
                 from: startDate,
                 frequency: frequency,
                 interval: interval,
-                weekdays: weekdays
+                weekdays: weekdays,
+                originalDay: originalDay
             )
             
             var iterationCount = 0
@@ -322,7 +328,7 @@ class SubscriptionManager: ObservableObject {
                     break
                 }
                 
-                // Only include today and future dates that are not skipped (use startOfDay for consistent comparison)
+                // Only include today and future dates that are not skipped
                 if currentDateStart >= todayStart && !isSkipped {
                     let transaction = Transaction(
                         id: Self.generateOccurrenceId(subscriptionId: subscription.id, occurrenceDate: currentDate),
@@ -340,12 +346,13 @@ class SubscriptionManager: ObservableObject {
                     allTransactions.append(transaction)
                 }
                 
-                // Calculate next date
+                // Calculate next date - preserve originalDay to prevent drift
                 let nextDate = calculateNextDate(
                     from: currentDate,
                     frequency: frequency,
                     interval: interval,
-                    weekdays: weekdays
+                    weekdays: weekdays,
+                    originalDay: originalDay
                 )
                 
                 if nextDate <= currentDate || nextDate > actualEndDate {
@@ -367,11 +374,14 @@ class SubscriptionManager: ObservableObject {
     }
     
     // Helper function to calculate next date based on frequency
+    // BUG FIX 2: Added originalDay parameter to preserve the original day of month
+    // This prevents date drift (e.g., 31st -> 28th -> 28th should be 31st -> 28th -> 31st)
     private func calculateNextDate(
         from startDate: Date,
         frequency: RepetitionFrequency,
         interval: Int,
-        weekdays: Set<Int>
+        weekdays: Set<Int>,
+        originalDay: Int
     ) -> Date {
         let calendar = Calendar.current
         let today = Date()
@@ -379,11 +389,19 @@ class SubscriptionManager: ObservableObject {
         switch frequency {
         case .day:
             var nextDate = calendar.date(byAdding: .day, value: interval, to: startDate) ?? startDate
-            if nextDate <= today {
+            // CRITICAL FIX: Use < (exclusive) to ensure today is included if startDate is today
+            // Only advance if the date is strictly in the past (before today)
+            let todayStart = calendar.startOfDay(for: today)
+            let nextDateStart = calendar.startOfDay(for: nextDate)
+            if nextDateStart < todayStart {
                 // Find next date in the future
-                while nextDate <= today {
+                while nextDateStart < todayStart {
                     if let date = calendar.date(byAdding: .day, value: interval, to: nextDate) {
                         nextDate = date
+                        let newNextDateStart = calendar.startOfDay(for: nextDate)
+                        if newNextDateStart >= todayStart {
+                            break
+                        }
                     } else {
                         break
                     }
@@ -392,6 +410,7 @@ class SubscriptionManager: ObservableObject {
             return nextDate
             
         case .week:
+            let todayStart = calendar.startOfDay(for: today)
             if !weekdays.isEmpty {
                 // Find next matching weekday
                 var candidate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
@@ -399,7 +418,9 @@ class SubscriptionManager: ObservableObject {
                 while attempts < 7 {
                     let weekday = calendar.component(.weekday, from: candidate)
                     let adjustedWeekday = weekday == 1 ? 7 : weekday - 1
-                    if weekdays.contains(adjustedWeekday) && candidate > today {
+                    let candidateStart = calendar.startOfDay(for: candidate)
+                    // CRITICAL FIX: Use >= (inclusive) to ensure today is included
+                    if weekdays.contains(adjustedWeekday) && candidateStart >= todayStart {
                         return candidate
                     }
                     if let next = calendar.date(byAdding: .day, value: 1, to: candidate) {
@@ -413,30 +434,93 @@ class SubscriptionManager: ObservableObject {
                 return calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
             } else {
                 var nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-                if nextDate <= today {
+                let nextDateStart = calendar.startOfDay(for: nextDate)
+                // CRITICAL FIX: Use < (exclusive) to ensure today is included
+                if nextDateStart < todayStart {
                     nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: nextDate) ?? nextDate
                 }
                 return nextDate
             }
             
         case .month:
-            var nextDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
-            // Preserve day of month, handle end-of-month edge cases
-            if let day = calendar.dateComponents([.day], from: startDate).day {
-                var components = calendar.dateComponents([.year, .month], from: nextDate)
-                components.day = min(day, calendar.range(of: .day, in: .month, for: nextDate)?.count ?? day)
-                nextDate = calendar.date(from: components) ?? nextDate
+            // BUG FIX 2: Calculate target month, then force originalDay
+            // This ensures 31st stays 31st for months that have it, and only clamps when necessary
+            let targetDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
+            
+            // Get the target month/year
+            let targetComponents = calendar.dateComponents([.year, .month], from: targetDate)
+            
+            // Try to set the original day
+            var components = targetComponents
+            components.day = originalDay
+            
+            // Check if the target month has enough days
+            if let daysInMonth = calendar.range(of: .day, in: .month, for: targetDate)?.count {
+                // Clamp to last day of month if originalDay doesn't exist in target month
+                // But remember: we want to use originalDay for the NEXT iteration, not stick to clamped day
+                components.day = min(originalDay, daysInMonth)
             }
-            if nextDate <= today {
-                nextDate = calendar.date(byAdding: .month, value: interval, to: nextDate) ?? nextDate
+            
+            var nextDate = calendar.date(from: components) ?? targetDate
+            
+            // CRITICAL FIX: Use >= (inclusive) instead of > to ensure today is included
+            // Only advance if the date is strictly in the past (before today)
+            let todayStart = calendar.startOfDay(for: today)
+            let nextDateStart = calendar.startOfDay(for: nextDate)
+            
+            if nextDateStart < todayStart {
+                // Calculate next month while preserving originalDay
+                if let nextMonth = calendar.date(byAdding: .month, value: interval, to: nextDate) {
+                    let nextMonthComponents = calendar.dateComponents([.year, .month], from: nextMonth)
+                    var nextComponents = nextMonthComponents
+                    if let daysInNextMonth = calendar.range(of: .day, in: .month, for: nextMonth)?.count {
+                        nextComponents.day = min(originalDay, daysInNextMonth)
+                    } else {
+                        nextComponents.day = originalDay
+                    }
+                    nextDate = calendar.date(from: nextComponents) ?? nextMonth
+                }
             }
+            
             return nextDate
             
         case .year:
-            var nextDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
-            if nextDate <= today {
-                nextDate = calendar.date(byAdding: .year, value: interval, to: nextDate) ?? nextDate
+            // BUG FIX 2: For yearly, also preserve originalDay to handle leap years correctly
+            let targetDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
+            
+            // Get the target year/month
+            let targetComponents = calendar.dateComponents([.year, .month], from: targetDate)
+            
+            // Try to set the original day
+            var components = targetComponents
+            components.day = originalDay
+            
+            // Check if the target month has enough days (handles leap years)
+            if let daysInMonth = calendar.range(of: .day, in: .month, for: targetDate)?.count {
+                components.day = min(originalDay, daysInMonth)
             }
+            
+            var nextDate = calendar.date(from: components) ?? targetDate
+            
+            // CRITICAL FIX: Use < (exclusive) instead of <= to ensure today is included
+            // Only advance if the date is strictly in the past (before today)
+            let todayStart = calendar.startOfDay(for: today)
+            let nextDateStart = calendar.startOfDay(for: nextDate)
+            
+            if nextDateStart < todayStart {
+                // Calculate next year while preserving originalDay
+                if let nextYear = calendar.date(byAdding: .year, value: interval, to: nextDate) {
+                    let nextYearComponents = calendar.dateComponents([.year, .month], from: nextYear)
+                    var nextComponents = nextYearComponents
+                    if let daysInNextYearMonth = calendar.range(of: .day, in: .month, for: nextYear)?.count {
+                        nextComponents.day = min(originalDay, daysInNextYearMonth)
+                    } else {
+                        nextComponents.day = originalDay
+                    }
+                    nextDate = calendar.date(from: nextComponents) ?? nextYear
+                }
+            }
+            
             return nextDate
         }
     }

@@ -1412,15 +1412,21 @@ struct CustomSubscriptionFormView: View {
         weekdays: Set<Int>
     ) -> Date {
         let calendar = Calendar.current
+        let today = Date()
+        let todayStart = calendar.startOfDay(for: today)
+        let startDateStart = calendar.startOfDay(for: startDate)
         var nextDate = startDate
         
-        // If the start date is in the past, calculate the next occurrence
-        if startDate < Date() {
+        // CRITICAL FIX: Only advance if the start date is strictly BEFORE today (yesterday or earlier)
+        // Do NOT advance if startDate is today - use startDate as-is
+        if startDateStart < todayStart {
             switch frequency {
             case .day:
                 // Add interval days
-                while nextDate < Date() {
+                var nextDateStart = calendar.startOfDay(for: nextDate)
+                while nextDateStart < todayStart {
                     nextDate = calendar.date(byAdding: .day, value: interval, to: nextDate) ?? nextDate
+                    nextDateStart = calendar.startOfDay(for: nextDate)
                 }
                 
             case .week:
@@ -1429,11 +1435,12 @@ struct CustomSubscriptionFormView: View {
                     // Find the next matching weekday
                     var found = false
                     for weekOffset in 0..<(interval * 7) {
-                        let checkDate = calendar.date(byAdding: .day, value: weekOffset, to: Date()) ?? Date()
+                        let checkDate = calendar.date(byAdding: .day, value: weekOffset, to: today) ?? today
+                        let checkDateStart = calendar.startOfDay(for: checkDate)
                         let checkWeekday = calendar.component(.weekday, from: checkDate)
                         let adjustedCheckWeekday = checkWeekday == 1 ? 7 : checkWeekday - 1
                         
-                        if weekdays.contains(adjustedCheckWeekday) && checkDate >= startDate {
+                        if weekdays.contains(adjustedCheckWeekday) && checkDateStart >= startDateStart {
                             nextDate = checkDate
                             found = true
                             break
@@ -1443,25 +1450,36 @@ struct CustomSubscriptionFormView: View {
                     if !found {
                         // If no matching weekday found in reasonable range, use interval weeks from start
                         nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+                        var nextDateStart = calendar.startOfDay(for: nextDate)
+                        while nextDateStart < todayStart {
+                            nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: nextDate) ?? nextDate
+                            nextDateStart = calendar.startOfDay(for: nextDate)
+                        }
                     }
                 } else {
                     // No weekdays selected, just add interval weeks
                     nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-                    while nextDate < Date() {
+                    var nextDateStart = calendar.startOfDay(for: nextDate)
+                    while nextDateStart < todayStart {
                         nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: nextDate) ?? nextDate
+                        nextDateStart = calendar.startOfDay(for: nextDate)
                     }
                 }
                 
             case .month:
                 // Add interval months, keeping the same day of month
-                while nextDate < Date() {
+                var nextDateStart = calendar.startOfDay(for: nextDate)
+                while nextDateStart < todayStart {
                     nextDate = calendar.date(byAdding: .month, value: interval, to: nextDate) ?? nextDate
+                    nextDateStart = calendar.startOfDay(for: nextDate)
                 }
                 
             case .year:
                 // Add interval years
-                while nextDate < Date() {
+                var nextDateStart = calendar.startOfDay(for: nextDate)
+                while nextDateStart < todayStart {
                     nextDate = calendar.date(byAdding: .year, value: interval, to: nextDate) ?? nextDate
+                    nextDateStart = calendar.startOfDay(for: nextDate)
                 }
             }
         }
