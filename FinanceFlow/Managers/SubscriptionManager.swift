@@ -231,7 +231,8 @@ class SubscriptionManager: ObservableObject {
     ///   - occurrenceDate: The specific date of the occurrence to pay (and skip)
     ///   - transactionManager: The transaction manager to add the new transaction to
     func payEarly(subscription: PlannedPayment, occurrenceDate: Date, transactionManager: TransactionManager) {
-        // Create a new transaction with today's date
+        // Create a new standalone transaction with today's date
+        // Do not link it to a source payment ID; treat it as a standalone transaction
         let newTransaction = Transaction(
             id: UUID(),
             title: subscription.title,
@@ -242,8 +243,8 @@ class SubscriptionManager: ObservableObject {
             accountName: subscription.accountName,
             toAccountName: nil,
             currency: UserDefaults.standard.string(forKey: "mainCurrency") ?? "USD",
-            sourcePlannedPaymentId: subscription.id,
-            occurrenceDate: occurrenceDate // Store the original occurrence date
+            sourcePlannedPaymentId: nil, // Standalone transaction, not linked to subscription
+            occurrenceDate: nil // Standalone transaction, no occurrence date
         )
         
         // Add the transaction to TransactionManager

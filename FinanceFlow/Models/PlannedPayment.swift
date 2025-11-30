@@ -8,6 +8,20 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Subscription Sheet Data Wrapper
+// Wrapper struct to ensure payment and occurrence date are always synchronized
+struct SubscriptionSheetData: Identifiable {
+    let id: UUID
+    let payment: PlannedPayment
+    let occurrenceDate: Date
+    
+    init(payment: PlannedPayment, occurrenceDate: Date) {
+        self.id = payment.id
+        self.payment = payment
+        self.occurrenceDate = occurrenceDate
+    }
+}
+
 enum PlannedPaymentType: Codable {
     case subscription
     case loan

@@ -1406,8 +1406,7 @@ struct TransactionsView: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var showPlannedPayments = false
     @State private var selectedTab: TransactionTab = .past
-    @State private var selectedPlannedPayment: PlannedPayment? // For editing scheduled transactions
-    @State private var selectedOccurrenceDate: Date? // The specific occurrence date when paying early
+    @State private var subscriptionSheetData: SubscriptionSheetData? // Single state for payment and occurrence date
     @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
     @State private var plannedPaymentToDeleteFromEdit: PlannedPayment? // For delete confirmation from edit form
     @State private var showDeleteScheduledAlert = false
@@ -1858,11 +1857,13 @@ struct TransactionsView: View {
                                                 ForEach(groupedScheduled[day] ?? [], id: \.id) { transaction in
                                                     // ALL transactions here are scheduled (from upcomingTransactions)
                                                     Button {
-                                                        // Capture the occurrence date before opening the form
-                                                        selectedOccurrenceDate = transaction.occurrenceDate ?? transaction.date
-                                                        // Find and open the source PlannedPayment for editing
+                                                        // Capture the occurrence date and payment together
+                                                        let occurrenceDate = transaction.occurrenceDate ?? transaction.date
                                                         if let sourcePayment = findSourcePlannedPayment(for: transaction) {
-                                                            selectedPlannedPayment = sourcePayment
+                                                            subscriptionSheetData = SubscriptionSheetData(
+                                                                payment: sourcePayment,
+                                                                occurrenceDate: occurrenceDate
+                                                            )
                                                         }
                                                     } label: {
                                                         TransactionRow(transaction: transaction)
@@ -2007,40 +2008,35 @@ struct TransactionsView: View {
                 .environmentObject(transactionManager)
                 .id(currentFormMode) // Force recreation when mode changes
             }
-            .sheet(item: $selectedPlannedPayment) { payment in
+            .sheet(item: $subscriptionSheetData) { sheetData in
                 CustomSubscriptionFormView(
-                    paymentType: payment.type,
-                    existingPayment: payment,
-                    initialIsIncome: payment.isIncome,
-                    occurrenceDate: selectedOccurrenceDate,
+                    paymentType: sheetData.payment.type,
+                    existingPayment: sheetData.payment,
+                    initialIsIncome: sheetData.payment.isIncome,
+                    occurrenceDate: sheetData.occurrenceDate,
                     onSave: { updatedPayment in
                         subscriptionManager.updateSubscription(updatedPayment)
-                        selectedPlannedPayment = nil
-                        selectedOccurrenceDate = nil
+                        subscriptionSheetData = nil
                     },
                     onCancel: {
-                        selectedPlannedPayment = nil
-                        selectedOccurrenceDate = nil
+                        subscriptionSheetData = nil
                     },
                     onDelete: { paymentToDelete in
                         // If it's a repeating payment, show confirmation modal
                         if paymentToDelete.isRepeating {
                             plannedPaymentToDeleteFromEdit = paymentToDelete
                             showDeleteScheduledAlert = true
-                            selectedPlannedPayment = nil
-                            selectedOccurrenceDate = nil
+                            subscriptionSheetData = nil
                         } else {
                             // Non-repeating, delete directly
                             subscriptionManager.deleteSubscription(paymentToDelete)
-                            selectedPlannedPayment = nil
-                            selectedOccurrenceDate = nil
+                            subscriptionSheetData = nil
                         }
                     },
                     onPay: { occurrenceDate in
                         // Pay early: create transaction and skip the occurrence
-                        subscriptionManager.payEarly(subscription: payment, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
-                        selectedPlannedPayment = nil
-                        selectedOccurrenceDate = nil
+                        subscriptionManager.payEarly(subscription: sheetData.payment, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
+                        subscriptionSheetData = nil
                     }
                 )
                 .environmentObject(settings)

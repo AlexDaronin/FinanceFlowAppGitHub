@@ -28,8 +28,7 @@ struct SubscriptionsView: View {
     @EnvironmentObject var accountManager: AccountManager
     @EnvironmentObject var transactionManager: TransactionManager
     @State private var showAddSheet = false
-    @State private var selectedSubscription: PlannedPayment?
-    @State private var selectedOccurrenceDate: Date? // The specific occurrence date when paying early
+    @State private var subscriptionSheetData: SubscriptionSheetData? // Single state for payment and occurrence date
     @State private var selectedMode: SubscriptionMode = .expenses
     @State private var expandedMonths: Set<String> = [] // Track which months are expanded
     @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
@@ -297,11 +296,13 @@ struct SubscriptionsView: View {
                                                     // Scheduled transaction - SAME rendering as Future tab
                                                     // Editable (opens PlannedPayment editor) and deletable
                                                     Button {
-                                                        // Capture the occurrence date before opening the form
-                                                        selectedOccurrenceDate = transaction.occurrenceDate ?? transaction.date
-                                                        // Find and open the source PlannedPayment for editing
+                                                        // Capture the occurrence date and payment together
+                                                        let occurrenceDate = transaction.occurrenceDate ?? transaction.date
                                                         if let sourcePayment = findSourcePlannedPayment(for: transaction) {
-                                                            selectedSubscription = sourcePayment
+                                                            subscriptionSheetData = SubscriptionSheetData(
+                                                                payment: sourcePayment,
+                                                                occurrenceDate: occurrenceDate
+                                                            )
                                                         }
                                                     } label: {
                                                         TransactionRow(transaction: transaction)
@@ -322,8 +323,10 @@ struct SubscriptionsView: View {
                                                     // Original PlannedPayment
                                                     Button {
                                                         // For non-repeating payments, use the payment's date as occurrence date
-                                                        selectedOccurrenceDate = subscription.date
-                                                        selectedSubscription = subscription
+                                                        subscriptionSheetData = SubscriptionSheetData(
+                                                            payment: subscription,
+                                                            occurrenceDate: subscription.date
+                                                        )
                                                     } label: {
                                                         SubscriptionRow(subscription: subscription)
                                                     }
@@ -411,40 +414,35 @@ struct SubscriptionsView: View {
             .environmentObject(settings)
             .environmentObject(accountManager)
         }
-        .sheet(item: $selectedSubscription) { subscription in
+        .sheet(item: $subscriptionSheetData) { sheetData in
             CustomSubscriptionFormView(
                 paymentType: .subscription,
-                existingPayment: subscription,
-                initialIsIncome: subscription.isIncome,
-                occurrenceDate: selectedOccurrenceDate,
+                existingPayment: sheetData.payment,
+                initialIsIncome: sheetData.payment.isIncome,
+                occurrenceDate: sheetData.occurrenceDate,
                 onSave: { updatedSubscription in
                     manager.updateSubscription(updatedSubscription)
-                    selectedSubscription = nil
-                    selectedOccurrenceDate = nil
+                    subscriptionSheetData = nil
                 },
                 onCancel: {
-                    selectedSubscription = nil
-                    selectedOccurrenceDate = nil
+                    subscriptionSheetData = nil
                 },
                 onDelete: { paymentToDelete in
                     // If it's a repeating payment, show confirmation modal
                     if paymentToDelete.isRepeating {
                         plannedPaymentToDelete = paymentToDelete
                         showDeleteScheduledAlert = true
-                        selectedSubscription = nil
-                        selectedOccurrenceDate = nil
+                        subscriptionSheetData = nil
                     } else {
                         // Non-repeating, delete directly
                         manager.deleteSubscription(paymentToDelete)
-                        selectedSubscription = nil
-                        selectedOccurrenceDate = nil
+                        subscriptionSheetData = nil
                     }
                 },
                 onPay: { occurrenceDate in
                     // Pay early: create transaction and skip the occurrence
-                    manager.payEarly(subscription: subscription, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
-                    selectedSubscription = nil
-                    selectedOccurrenceDate = nil
+                    manager.payEarly(subscription: sheetData.payment, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
+                    subscriptionSheetData = nil
                 }
             )
             .environmentObject(settings)
@@ -1154,6 +1152,27 @@ struct CustomSubscriptionFormView: View {
                             .padding(.horizontal)
                             .padding(.top, 8)
                         
+                        // Pay Early Button (only show if occurrenceDate is set and existingPayment exists)
+                        // Place at top for prominence
+                        if let occurrenceDate = occurrenceDate, existingPayment != nil, let onPay = onPay {
+                            Button {
+                                onPay(occurrenceDate)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.headline)
+                                    Text("\(String(localized: "Pay Now", comment: "Pay early button")) \(currencyString(amount, code: settings.currency))")
+                                        .font(.headline)
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(Color.green)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                            .padding(.horizontal)
+                        }
+                        
                         // Hero Amount Input (Center)
                         heroAmountField
                             .padding(.horizontal)
@@ -1199,27 +1218,6 @@ struct CustomSubscriptionFormView: View {
                         // Repetition Section
                         repetitionSection
                             .padding(.horizontal)
-                        
-                        // Pay Early Button (only show if occurrenceDate is set and existingPayment exists)
-                        if let occurrenceDate = occurrenceDate, existingPayment != nil, let onPay = onPay {
-                            Button {
-                                onPay(occurrenceDate)
-                            } label: {
-                                HStack {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.headline)
-                                    Text("\(String(localized: "Pay", comment: "Pay early button")) \(currencyString(amount, code: settings.currency))")
-                                        .font(.headline)
-                                }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(Color.green)
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            }
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                        }
                         
                         // Save Button
                         Button {
