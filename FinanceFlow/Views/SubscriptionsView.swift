@@ -27,8 +27,10 @@ struct SubscriptionsView: View {
     @EnvironmentObject var manager: SubscriptionManager
     @EnvironmentObject var accountManager: AccountManager
     @EnvironmentObject var transactionManager: TransactionManager
+    @EnvironmentObject var creditManager: CreditManager
     @State private var showAddSheet = false
-    @State private var subscriptionSheetData: SubscriptionSheetData? // Single state for payment and occurrence date
+    @State private var selectedSubscription: PlannedPayment?
+    @State private var selectedOccurrenceDate: Date? // The specific occurrence date when paying early
     @State private var selectedMode: SubscriptionMode = .expenses
     @State private var expandedMonths: Set<String> = [] // Track which months are expanded
     @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
@@ -86,11 +88,39 @@ struct SubscriptionsView: View {
         let calendar = Calendar.current
         var allItems: [(date: Date, item: Any)] = []
         
+        // CRITICAL FIX: Track transaction IDs to prevent duplicates
+        var seenTransactionIds: Set<UUID> = []
+        var seenPlannedPaymentIds: Set<UUID> = []
+        
         // Add scheduled occurrences (future transactions from repeating payments)
         // This is the SAME data shown in Transactions > Future tab
+        // CRITICAL: For repeating subscriptions, we only show the generated Transaction occurrences
+        // NOT the original PlannedPayment (which would cause duplicates)
         for transaction in scheduledOccurrences {
+            // Skip if we've already seen this transaction ID
+            if seenTransactionIds.contains(transaction.id) {
+                continue
+            }
+            seenTransactionIds.insert(transaction.id)
+            
             let date = calendar.startOfDay(for: transaction.date)
             allItems.append((date: date, item: transaction))
+        }
+        
+        // Add ONLY non-repeating PlannedPayments (repeating ones are shown via scheduledOccurrences above)
+        // This prevents duplicates: repeating subscriptions show as Transactions, non-repeating show as PlannedPayments
+        for subscription in filteredSubscriptions {
+            // Only add if it's NOT repeating (repeating ones are already shown as Transactions)
+            if !subscription.isRepeating {
+                // Skip if we've already seen this PlannedPayment ID
+                if seenPlannedPaymentIds.contains(subscription.id) {
+                    continue
+                }
+                seenPlannedPaymentIds.insert(subscription.id)
+                
+                let date = calendar.startOfDay(for: subscription.date)
+                allItems.append((date: date, item: subscription))
+            }
         }
         
         // Group by month
@@ -186,6 +216,151 @@ struct SubscriptionsView: View {
         }
     }
     
+    // MARK: - Subscriptions List Content
+    private var subscriptionsListContent: some View {
+        Group {
+            if groupedByMonth.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary.opacity(0.5))
+                    
+                    Text(selectedMode == .expenses ? String(localized: "No active expenses", comment: "No active expenses") : String(localized: "No active income", comment: "No active income"))
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+            } else {
+                subscriptionsListGrouped
+            }
+        }
+    }
+    
+    // MARK: - Subscriptions List Grouped
+    private var subscriptionsListGrouped: some View {
+        ForEach(Array(groupedByMonth.enumerated()), id: \.element.monthKey) { index, monthGroup in
+            monthGroupView(index: index, monthGroup: monthGroup)
+        }
+    }
+    
+    // MARK: - Month Group View
+    private func monthGroupView(index: Int, monthGroup: (monthKey: String, monthStart: Date, items: [Any])) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Month Header with Expand/Collapse
+            Button {
+                toggleMonth(monthGroup.monthKey)
+            } label: {
+                HStack {
+                    Text(monthHeader(for: monthGroup.monthStart))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: isMonthExpanded(monthGroup.monthKey) ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+            .padding(.top, index == 0 ? 8 : 16)
+            .padding(.bottom, 8)
+            
+            // Items for this month (only show if expanded)
+            if isMonthExpanded(monthGroup.monthKey) {
+                monthItemsView(items: monthGroup.items)
+            }
+        }
+    }
+    
+    // MARK: - Month Items View
+    private func monthItemsView(items: [Any]) -> some View {
+        let calendar = Calendar.current
+        let dayGrouped = Dictionary(grouping: items) { item -> Date in
+            // Handle both Transactions and PlannedPayments
+            if let transaction = item as? Transaction {
+                return calendar.startOfDay(for: transaction.date)
+            } else if let payment = item as? PlannedPayment {
+                return calendar.startOfDay(for: payment.date)
+            } else {
+                return Date()
+            }
+        }
+        
+        let sortedDays = dayGrouped.keys.sorted()
+        
+        return ForEach(Array(sortedDays.enumerated()), id: \.element) { dayIndex, day in
+            dayGroupView(dayIndex: dayIndex, day: day, items: dayGrouped[day] ?? [])
+        }
+    }
+    
+    // MARK: - Day Group View
+    private func dayGroupView(dayIndex: Int, day: Date, items: [Any]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Day Header
+            dayHeader(for: day)
+                .padding(.horizontal, 20)
+                .padding(.top, dayIndex == 0 ? 0 : 12)
+                .padding(.bottom, 4)
+            
+            // Items for this day
+            ForEach(Array(items.enumerated()), id: \.offset) { itemIndex, item in
+                dayItemView(item: item)
+            }
+        }
+    }
+    
+    // MARK: - Day Item View
+    @ViewBuilder
+    private func dayItemView(item: Any) -> some View {
+        if let transaction = item as? Transaction {
+            // Scheduled transaction
+            Button {
+                let occurrenceDate = transaction.occurrenceDate ?? transaction.date
+                if let sourcePayment = findSourcePlannedPayment(for: transaction) {
+                    selectedOccurrenceDate = occurrenceDate
+                    selectedSubscription = sourcePayment
+                }
+            } label: {
+                TransactionRow(transaction: transaction)
+                    .opacity(0.8)
+            }
+            .buttonStyle(.plain)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button(role: .destructive) {
+                    scheduledTransactionToDelete = transaction
+                    showDeleteScheduledAlert = true
+                } label: {
+                    Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
+                }
+            }
+            .padding(.bottom, 8)
+        } else if let subscription = item as? PlannedPayment {
+            // Original PlannedPayment
+            Button {
+                selectedOccurrenceDate = subscription.date
+                selectedSubscription = subscription
+            } label: {
+                SubscriptionRow(subscription: subscription)
+            }
+            .buttonStyle(.plain)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button(role: .destructive) {
+                    if subscription.isRepeating {
+                        plannedPaymentToDelete = subscription
+                        showDeleteScheduledAlert = true
+                    } else {
+                        manager.deleteSubscription(subscription)
+                    }
+                } label: {
+                    Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
+                }
+            }
+            .id(subscription.id)
+            .padding(.bottom, 8)
+        }
+    }
+    
     var body: some View {
         ZStack {
             // Bottom Layer: Background
@@ -230,130 +405,7 @@ struct SubscriptionsView: View {
                     .padding(.horizontal)
                     
                     // Item 3: Subscriptions List (Grouped by Date - matching TransactionsView)
-                    if filteredSubscriptions.isEmpty {
-                        VStack(spacing: 16) {
-                            Image(systemName: "tray")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.secondary.opacity(0.5))
-                            
-                            Text(selectedMode == .expenses ? String(localized: "No active expenses", comment: "No active expenses") : String(localized: "No active income", comment: "No active income"))
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
-                    } else {
-                        ForEach(Array(groupedByMonth.enumerated()), id: \.element.monthKey) { index, monthGroup in
-                            VStack(alignment: .leading, spacing: 12) {
-                                // Month Header with Expand/Collapse
-                                Button {
-                                    toggleMonth(monthGroup.monthKey)
-                                } label: {
-                                    HStack {
-                                        Text(monthHeader(for: monthGroup.monthStart))
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(.primary)
-                                        Spacer()
-                                        Image(systemName: isMonthExpanded(monthGroup.monthKey) ? "chevron.down" : "chevron.right")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 20)
-                                .padding(.top, index == 0 ? 8 : 16)
-                                .padding(.bottom, 8)
-                                
-                                // Items for this month (only show if expanded)
-                                if isMonthExpanded(monthGroup.monthKey) {
-                                    // Group items by day within the month
-                                    // Items can be Transactions (scheduled occurrences) - SAME as Future tab
-                                    let calendar = Calendar.current
-                                    let dayGrouped = Dictionary(grouping: monthGroup.items) { item -> Date in
-                                        // Handle both Transactions and PlannedPayments
-                                        if let transaction = item as? Transaction {
-                                            return calendar.startOfDay(for: transaction.date)
-                                        } else if let payment = item as? PlannedPayment {
-                                            return calendar.startOfDay(for: payment.date)
-                                        } else {
-                                            return Date()
-                                        }
-                                    }
-                                    
-                                    let sortedDays = dayGrouped.keys.sorted()
-                                    
-                                    ForEach(Array(sortedDays.enumerated()), id: \.element) { dayIndex, day in
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            // Day Header
-                                            dayHeader(for: day)
-                                                .padding(.horizontal, 20)
-                                                .padding(.top, dayIndex == 0 ? 0 : 12)
-                                                .padding(.bottom, 4)
-                                            
-                                            // Items for this day (Transactions and PlannedPayments - SAME as Future tab)
-                                            ForEach(Array(dayGrouped[day]?.enumerated() ?? [].enumerated()), id: \.offset) { itemIndex, item in
-                                                if let transaction = item as? Transaction {
-                                                    // Scheduled transaction - SAME rendering as Future tab
-                                                    // Editable (opens PlannedPayment editor) and deletable
-                                                    Button {
-                                                        // Capture the occurrence date and payment together
-                                                        let occurrenceDate = transaction.occurrenceDate ?? transaction.date
-                                                        if let sourcePayment = findSourcePlannedPayment(for: transaction) {
-                                                            subscriptionSheetData = SubscriptionSheetData(
-                                                                payment: sourcePayment,
-                                                                occurrenceDate: occurrenceDate
-                                                            )
-                                                        }
-                                                    } label: {
-                                                        TransactionRow(transaction: transaction)
-                                                            .opacity(0.8) // Slightly dimmed to indicate scheduled
-                                                    }
-                                                    .buttonStyle(.plain)
-                                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                                        Button(role: .destructive) {
-                                                            // Show confirmation alert for scheduled transaction deletion
-                                                            scheduledTransactionToDelete = transaction
-                                                            showDeleteScheduledAlert = true
-                                                        } label: {
-                                                            Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
-                                                        }
-                                                    }
-                                                    .padding(.bottom, 8)
-                                                } else if let subscription = item as? PlannedPayment {
-                                                    // Original PlannedPayment
-                                                    Button {
-                                                        // For non-repeating payments, use the payment's date as occurrence date
-                                                        subscriptionSheetData = SubscriptionSheetData(
-                                                            payment: subscription,
-                                                            occurrenceDate: subscription.date
-                                                        )
-                                                    } label: {
-                                                        SubscriptionRow(subscription: subscription)
-                                                    }
-                                                    .buttonStyle(.plain)
-                                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                                        Button(role: .destructive) {
-                                                            // Show confirmation modal for repeating payments, direct delete for non-repeating
-                                                            if subscription.isRepeating {
-                                                                plannedPaymentToDelete = subscription
-                                                                showDeleteScheduledAlert = true
-                                                            } else {
-                                                                manager.deleteSubscription(subscription)
-                                                            }
-                                                        } label: {
-                                                            Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
-                                                        }
-                                                    }
-                                                    .id(subscription.id)
-                                                    .padding(.bottom, 8)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    subscriptionsListContent
                     }
                     .padding(.bottom, 100) // Space for FAB button
                 }
@@ -414,35 +466,40 @@ struct SubscriptionsView: View {
             .environmentObject(settings)
             .environmentObject(accountManager)
         }
-        .sheet(item: $subscriptionSheetData) { sheetData in
+        .sheet(item: $selectedSubscription) { subscription in
             CustomSubscriptionFormView(
                 paymentType: .subscription,
-                existingPayment: sheetData.payment,
-                initialIsIncome: sheetData.payment.isIncome,
-                occurrenceDate: sheetData.occurrenceDate,
+                existingPayment: subscription,
+                initialIsIncome: subscription.isIncome,
+                occurrenceDate: selectedOccurrenceDate,
                 onSave: { updatedSubscription in
                     manager.updateSubscription(updatedSubscription)
-                    subscriptionSheetData = nil
+                    selectedSubscription = nil
+                    selectedOccurrenceDate = nil
                 },
                 onCancel: {
-                    subscriptionSheetData = nil
+                    selectedSubscription = nil
+                    selectedOccurrenceDate = nil
                 },
                 onDelete: { paymentToDelete in
                     // If it's a repeating payment, show confirmation modal
                     if paymentToDelete.isRepeating {
                         plannedPaymentToDelete = paymentToDelete
                         showDeleteScheduledAlert = true
-                        subscriptionSheetData = nil
+                        selectedSubscription = nil
+                        selectedOccurrenceDate = nil
                     } else {
                         // Non-repeating, delete directly
                         manager.deleteSubscription(paymentToDelete)
-                        subscriptionSheetData = nil
+                        selectedSubscription = nil
+                        selectedOccurrenceDate = nil
                     }
                 },
                 onPay: { occurrenceDate in
                     // Pay early: create transaction and skip the occurrence
-                    manager.payEarly(subscription: sheetData.payment, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
-                    subscriptionSheetData = nil
+                    manager.payEarly(subscription: subscription, occurrenceDate: occurrenceDate, transactionManager: transactionManager, creditManager: creditManager, accountManager: accountManager, currency: settings.currency)
+                    selectedSubscription = nil
+                    selectedOccurrenceDate = nil
                 }
             )
             .environmentObject(settings)
@@ -555,31 +612,65 @@ struct SubscriptionsView: View {
     private func handleDeleteOnlyThisScheduled(_ transaction: Transaction) {
         // Use unified deletion function (REQUIREMENT D)
         var subscriptionId: UUID?
-        var transactionDate: Date?
+        let calendar = Calendar.current
         
+        // CRITICAL FIX: Always use the transaction's date
+        let transactionDate = calendar.startOfDay(for: transaction.date)
+        
+        // Try to find subscription ID
         if let id = transaction.sourcePlannedPaymentId {
+            // Direct lookup - most reliable
             subscriptionId = id
-            let calendar = Calendar.current
-            transactionDate = calendar.startOfDay(for: transaction.date)
         } else if let sourcePayment = findSourcePlannedPayment(for: transaction) {
             // Fallback for legacy transactions
             subscriptionId = sourcePayment.id
-            let calendar = Calendar.current
-            transactionDate = calendar.startOfDay(for: transaction.date)
+        } else {
+            // Last resort: Try to find by matching transaction details
+            if let matchingSubscription = manager.subscriptions.first(where: { sub in
+                sub.isRepeating &&
+                transaction.title == sub.title &&
+                abs(transaction.amount - sub.amount) < 0.01 &&
+                transaction.accountName == sub.accountName &&
+                transaction.type == (sub.isIncome ? .income : .expense)
+            }) {
+                subscriptionId = matchingSubscription.id
+            }
         }
         
-        if let id = subscriptionId, let date = transactionDate {
+        // CRITICAL FIX: Always attempt deletion - we always have a date
+        // This ensures subsequent deletions work even after the first deletion
+        let date = transactionDate
+        
+        if let id = subscriptionId {
+            // Normal path: delete via SubscriptionManager
             manager.deleteOccurrence(subscriptionId: id, occurrenceDate: date)
-            // Force UI refresh in both Planned and Future tabs
             manager.objectWillChange.send()
-            // Regenerate to ensure both tabs see the update immediately
             manager.generateUpcomingTransactions()
-            
-            // CRITICAL: Also remove the transaction from TransactionManager if it exists there
-            // This handles old subscription transactions that were saved before the refactoring
-            if transactionManager.transactions.contains(where: { $0.id == transaction.id }) {
-                transactionManager.deleteTransaction(transaction)
+        } else {
+            // Fallback: If we can't find the subscription, try to find it by matching details
+            if let matchingSubscription = manager.subscriptions.first(where: { sub in
+                sub.isRepeating &&
+                transaction.title == sub.title &&
+                abs(transaction.amount - sub.amount) < 0.01 &&
+                transaction.accountName == sub.accountName &&
+                transaction.type == (sub.isIncome ? .income : .expense)
+            }) {
+                manager.deleteOccurrence(subscriptionId: matchingSubscription.id, occurrenceDate: date)
+                manager.objectWillChange.send()
+                manager.generateUpcomingTransactions()
+            } else {
+                // Last resort: At least remove from TransactionManager and regenerate
+                if transactionManager.transactions.contains(where: { $0.id == transaction.id }) {
+                    transactionManager.deleteTransaction(transaction)
+                }
+                manager.generateUpcomingTransactions()
             }
+        }
+        
+        // CRITICAL: Also remove the transaction from TransactionManager if it exists there
+        // This handles old subscription transactions that were saved before the refactoring
+        if transactionManager.transactions.contains(where: { $0.id == transaction.id }) {
+            transactionManager.deleteTransaction(transaction)
         }
         
         scheduledTransactionToDelete = nil
@@ -682,9 +773,10 @@ struct SubscriptionsView: View {
         // 1. It's in the future (or today)
         // 2. It's not skipped
         // 3. It's within the endDate range
+        // CRITICAL FIX: Use generateOccurrenceId for deterministic IDs
         if startDateStart >= todayStart && !isStartDateSkipped && startDateStart <= actualEndDateStart {
             let transaction = Transaction(
-                id: UUID(),
+                id: SubscriptionManager.generateOccurrenceId(subscriptionId: payment.id, occurrenceDate: startDate),
                 title: payment.title,
                 category: payment.category ?? "General",
                 amount: payment.amount,
@@ -693,8 +785,8 @@ struct SubscriptionsView: View {
                 accountName: payment.accountName,
                 toAccountName: nil,
                 currency: settings.currency,
-                sourcePlannedPaymentId: payment.id, // ISSUE 2 FIX: Store source payment ID
-                occurrenceDate: startDate // ISSUE 2 FIX: Store occurrence date
+                sourcePlannedPaymentId: payment.id,
+                occurrenceDate: startDate
             )
             occurrences.append(transaction)
         }
@@ -724,10 +816,13 @@ struct SubscriptionsView: View {
             
             // Only include occurrences that are in the future and not skipped
             // Also ensure currentDate <= actualEndDate (which excludes date >= selectedDate when endDate is set)
-            if currentDate > today && !isSkipped && currentDate <= actualEndDate {
+            // CRITICAL FIX: Use startOfDay for consistent date comparisons
+            let currentDateStart = calendar.startOfDay(for: currentDate)
+            if currentDateStart >= todayStart && !isSkipped && currentDateStart <= actualEndDateStart {
                 // Create a transaction for this occurrence
+                // CRITICAL FIX: Use generateOccurrenceId for deterministic IDs
                 let transaction = Transaction(
-                    id: UUID(),
+                    id: SubscriptionManager.generateOccurrenceId(subscriptionId: payment.id, occurrenceDate: currentDate),
                     title: payment.title,
                     category: payment.category ?? "General",
                     amount: payment.amount,
@@ -736,8 +831,8 @@ struct SubscriptionsView: View {
                     accountName: payment.accountName,
                     toAccountName: nil,
                     currency: settings.currency,
-                    sourcePlannedPaymentId: payment.id, // ISSUE 2 FIX: Store source payment ID
-                    occurrenceDate: currentDate // ISSUE 2 FIX: Store occurrence date
+                    sourcePlannedPaymentId: payment.id,
+                    occurrenceDate: currentDate
                 )
                 occurrences.append(transaction)
             }
@@ -762,6 +857,7 @@ struct SubscriptionsView: View {
     }
     
     // Calculate next scheduled date
+    // CRITICAL FIX: Use startOfDay for consistent date comparisons to match SubscriptionManager logic
     private func calculateScheduledNextDate(
         from startDate: Date,
         frequency: RepetitionFrequency,
@@ -770,65 +866,139 @@ struct SubscriptionsView: View {
     ) -> Date {
         let calendar = Calendar.current
         let today = Date()
+        let todayStart = calendar.startOfDay(for: today)
         
         switch frequency {
         case .day:
             var nextDate = calendar.date(byAdding: .day, value: interval, to: startDate) ?? startDate
-            if nextDate <= today {
-                nextDate = calendar.date(byAdding: .day, value: interval, to: nextDate) ?? nextDate
+            let nextDateStart = calendar.startOfDay(for: nextDate)
+            // CRITICAL FIX: Use < (exclusive) to ensure today is included
+            if nextDateStart < todayStart {
+                // Find next date in the future
+                while nextDateStart < todayStart {
+                    if let date = calendar.date(byAdding: .day, value: interval, to: nextDate) {
+                        nextDate = date
+                        let newNextDateStart = calendar.startOfDay(for: nextDate)
+                        if newNextDateStart >= todayStart {
+                            break
+                        }
+                    } else {
+                        break
+                    }
+                }
             }
             return nextDate
             
         case .week:
             if !weekdays.isEmpty {
-                var checkDate = calendar.date(byAdding: .day, value: 1, to: startDate) ?? startDate
-                let maxDaysToCheck = 14
-                var daysChecked = 0
-                
-                while daysChecked < maxDaysToCheck {
-                    let checkWeekday = calendar.component(.weekday, from: checkDate)
-                    let adjustedCheckWeekday = checkWeekday == 1 ? 7 : checkWeekday - 1
-                    
-                    if weekdays.contains(adjustedCheckWeekday) {
-                        var resultDate = checkDate
-                        if interval > 1 {
-                            resultDate = calendar.date(byAdding: .weekOfYear, value: interval - 1, to: checkDate) ?? checkDate
-                        }
-                        if resultDate <= today {
-                            resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: resultDate) ?? resultDate
-                        }
-                        return resultDate
+                // Find next matching weekday
+                var candidate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+                var attempts = 0
+                while attempts < 7 {
+                    let weekday = calendar.component(.weekday, from: candidate)
+                    let adjustedWeekday = weekday == 1 ? 7 : weekday - 1
+                    let candidateStart = calendar.startOfDay(for: candidate)
+                    // CRITICAL FIX: Use >= (inclusive) to ensure today is included
+                    if weekdays.contains(adjustedWeekday) && candidateStart >= todayStart {
+                        return candidate
                     }
-                    
-                    checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? checkDate
-                    daysChecked += 1
+                    if let next = calendar.date(byAdding: .day, value: 1, to: candidate) {
+                        candidate = next
+                    } else {
+                        break
+                    }
+                    attempts += 1
                 }
-                
+                // Fallback to interval weeks
                 var resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-                if resultDate <= today {
+                let resultDateStart = calendar.startOfDay(for: resultDate)
+                // CRITICAL FIX: Use < (exclusive) to ensure today is included
+                if resultDateStart < todayStart {
                     resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: resultDate) ?? resultDate
                 }
                 return resultDate
             } else {
                 var resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-                if resultDate <= today {
+                let resultDateStart = calendar.startOfDay(for: resultDate)
+                // CRITICAL FIX: Use < (exclusive) to ensure today is included
+                if resultDateStart < todayStart {
                     resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: resultDate) ?? resultDate
                 }
                 return resultDate
             }
             
         case .month:
-            var nextDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
-            if nextDate <= today {
-                nextDate = calendar.date(byAdding: .month, value: interval, to: nextDate) ?? nextDate
+            // CRITICAL FIX: Preserve original day to prevent date drift (e.g., 31st -> 28th -> 31st)
+            let originalDay = calendar.component(.day, from: startDate)
+            let targetDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
+            
+            // Get the target month/year
+            let targetComponents = calendar.dateComponents([.year, .month], from: targetDate)
+            
+            // Try to set the original day
+            var components = targetComponents
+            components.day = originalDay
+            
+            // Check if the target month has enough days
+            if let daysInMonth = calendar.range(of: .day, in: .month, for: targetDate)?.count {
+                components.day = min(originalDay, daysInMonth)
             }
+            
+            var nextDate = calendar.date(from: components) ?? targetDate
+            let nextDateStart = calendar.startOfDay(for: nextDate)
+            
+            // CRITICAL FIX: Use < (exclusive) to ensure today is included
+            if nextDateStart < todayStart {
+                // Calculate next month while preserving originalDay
+                if let nextMonth = calendar.date(byAdding: .month, value: interval, to: nextDate) {
+                    let nextMonthComponents = calendar.dateComponents([.year, .month], from: nextMonth)
+                    var nextComponents = nextMonthComponents
+                    if let daysInNextMonth = calendar.range(of: .day, in: .month, for: nextMonth)?.count {
+                        nextComponents.day = min(originalDay, daysInNextMonth)
+                    } else {
+                        nextComponents.day = originalDay
+                    }
+                    nextDate = calendar.date(from: nextComponents) ?? nextMonth
+                }
+            }
+            
             return nextDate
             
         case .year:
-            var nextDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
-            if nextDate <= today {
-                nextDate = calendar.date(byAdding: .year, value: interval, to: nextDate) ?? nextDate
+            // CRITICAL FIX: Preserve original day to handle leap years correctly
+            let originalDay = calendar.component(.day, from: startDate)
+            let targetDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
+            
+            // Get the target year/month
+            let targetComponents = calendar.dateComponents([.year, .month], from: targetDate)
+            
+            // Try to set the original day
+            var components = targetComponents
+            components.day = originalDay
+            
+            // Check if the target month has enough days (handles leap years)
+            if let daysInMonth = calendar.range(of: .day, in: .month, for: targetDate)?.count {
+                components.day = min(originalDay, daysInMonth)
             }
+            
+            var nextDate = calendar.date(from: components) ?? targetDate
+            let nextDateStart = calendar.startOfDay(for: nextDate)
+            
+            // CRITICAL FIX: Use < (exclusive) to ensure today is included
+            if nextDateStart < todayStart {
+                // Calculate next year while preserving originalDay
+                if let nextYear = calendar.date(byAdding: .year, value: interval, to: nextDate) {
+                    let nextYearComponents = calendar.dateComponents([.year, .month], from: nextYear)
+                    var nextComponents = nextYearComponents
+                    if let daysInNextYearMonth = calendar.range(of: .day, in: .month, for: nextYear)?.count {
+                        nextComponents.day = min(originalDay, daysInNextYearMonth)
+                    } else {
+                        nextComponents.day = originalDay
+                    }
+                    nextDate = calendar.date(from: nextComponents) ?? nextYear
+                }
+            }
+            
             return nextDate
         }
     }
@@ -985,7 +1155,7 @@ struct SubscriptionRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(shortDate(subscription.date)) • \(subscription.accountName)")
+                Text("\(subscription.date.formatted(.dateTime.day().month(.abbreviated))) • \(subscription.accountName)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -1014,6 +1184,7 @@ struct CustomSubscriptionFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var accountManager: AccountManager
+    @EnvironmentObject var creditManager: CreditManager
     
     let paymentType: PlannedPaymentType
     let existingPayment: PlannedPayment?
@@ -1137,7 +1308,8 @@ struct CustomSubscriptionFormView: View {
     }
     
     private var isValid: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty && amount > 0
+        // CRITICAL FIX: Only require amount, title is optional
+        amount > 0
     }
     
     var body: some View {
@@ -1152,16 +1324,19 @@ struct CustomSubscriptionFormView: View {
                             .padding(.horizontal)
                             .padding(.top, 8)
                         
-                        // Pay Early Button (only show if occurrenceDate is set and existingPayment exists)
-                        // Place at top for prominence
-                        if let occurrenceDate = occurrenceDate, existingPayment != nil, let onPay = onPay {
+                        // Pay Now Button - show if onPay callback is provided
+                        // This allows paying early when editing an existing subscription
+                        if let onPay = onPay {
+                            // Use occurrenceDate if set (paying a specific occurrence), otherwise use the form's date
+                            let paymentDate = occurrenceDate ?? date
+                            
                             Button {
-                                onPay(occurrenceDate)
+                                onPay(paymentDate)
                             } label: {
                                 HStack {
                                     Image(systemName: "checkmark.circle.fill")
                                         .font(.headline)
-                                    Text("\(String(localized: "Pay Now", comment: "Pay early button")) \(currencyString(amount, code: settings.currency))")
+                                    Text("\(String(localized: "Pay Now", comment: "Pay now button")) \(currencyString(amount, code: settings.currency))")
                                         .font(.headline)
                                 }
                                 .foregroundColor(.white)
@@ -1171,6 +1346,7 @@ struct CustomSubscriptionFormView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                             }
                             .padding(.horizontal)
+                            .padding(.top, 8)
                         }
                         
                         // Hero Amount Input (Center)
@@ -1232,16 +1408,27 @@ struct CustomSubscriptionFormView: View {
                                 )
                             }
                             
+                            // CRITICAL FIX: Use default title if empty
+                            let finalTitle = title.trimmingCharacters(in: .whitespaces).isEmpty 
+                                ? (selectedCategory?.name ?? String(localized: "Subscription", comment: "Default subscription title"))
+                                : title.trimmingCharacters(in: .whitespaces)
+                            
                             let payment = PlannedPayment(
                                 id: existingPayment?.id ?? UUID(),
-                                title: title.trimmingCharacters(in: .whitespaces),
+                                title: finalTitle,
                                 amount: amount,
                                 date: nextDate,
                                 status: existingPayment?.status ?? .upcoming,
                                 accountName: accountName,
+                                toAccountName: existingPayment?.toAccountName,
                                 category: selectedCategoryName.isEmpty ? selectedCategory?.name : selectedCategoryName,
                                 type: paymentType,
                                 isIncome: isIncome,
+                                totalLoanAmount: existingPayment?.totalLoanAmount,
+                                remainingBalance: existingPayment?.remainingBalance,
+                                startDate: existingPayment?.startDate,
+                                interestRate: existingPayment?.interestRate,
+                                linkedCreditId: existingPayment?.linkedCreditId,
                                 isRepeating: isRepeating,
                                 repetitionFrequency: isRepeating ? repetitionFrequency.rawValue : nil,
                                 repetitionInterval: isRepeating ? repetitionInterval : nil,

@@ -11,8 +11,8 @@ struct Credit: Identifiable, Codable {
     let id: UUID
     let title: String
     let totalAmount: Double
-    let remaining: Double
-    let paid: Double
+    var remaining: Double
+    var paid: Double
     let monthsLeft: Int
     let dueDate: Date
     let monthlyPayment: Double
@@ -20,6 +20,7 @@ struct Credit: Identifiable, Codable {
     let startDate: Date?
     let accountName: String?
     let termMonths: Int? // Total loan term in months (optional)
+    var linkedAccountId: UUID? // Link to the Account created for this credit
     
     init(
         id: UUID = UUID(),
@@ -33,7 +34,8 @@ struct Credit: Identifiable, Codable {
         interestRate: Double? = nil,
         startDate: Date? = nil,
         accountName: String? = nil,
-        termMonths: Int? = nil
+        termMonths: Int? = nil,
+        linkedAccountId: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -47,6 +49,7 @@ struct Credit: Identifiable, Codable {
         self.startDate = startDate
         self.accountName = accountName
         self.termMonths = termMonths
+        self.linkedAccountId = linkedAccountId
     }
     
     var progress: Double {

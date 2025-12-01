@@ -7,20 +7,13 @@
 
 import Foundation
 
-func currencyString(_ value: Double, code: String = "USD") -> String {
-    value.formatted(.currency(code: code))
-}
-
-func shortDate(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d"
-    return formatter.string(from: date)
-}
-
-func formatDateForCredit(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d"
-    return formatter.string(from: date)
+func currencyString(_ amount: Double, code: String = "USD") -> String {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .currency
+    formatter.currencyCode = code
+    formatter.maximumFractionDigits = 2
+    formatter.minimumFractionDigits = 0
+    return formatter.string(from: NSNumber(value: amount)) ?? ""
 }
 
 /// Normalizes decimal input to accept both dots and commas as decimal separators
@@ -43,4 +36,3 @@ func normalizeDecimalInput(_ input: String) -> String {
     
     return normalized
 }
-

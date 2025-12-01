@@ -15,6 +15,7 @@ struct ContentView: View {
     @EnvironmentObject var transactionManager: TransactionManager
     @EnvironmentObject var accountManager: AccountManager
     @EnvironmentObject var debtManager: DebtManager
+    @EnvironmentObject var creditManager: CreditManager
     @State private var selectedTab: Int = 0
     
     private var colorScheme: ColorScheme? {
@@ -203,9 +204,14 @@ struct CreditsLoansView: View {
                         }
                         
                         // Credits List
+                        // Note: CreditCard component removed - CreditsView was deleted
                         VStack(spacing: 16) {
                             ForEach(credits) { credit in
-                                CreditCard(credit: credit)
+                                Text(credit.title)
+                                    .font(.headline)
+                                    .padding()
+                                    .background(Color.customCardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }
                     }
@@ -533,7 +539,7 @@ struct DebtsView: View {
                         )
                 }
                 // ----------------
-            }
+                }
             .padding(.trailing, 20) // Fixed right margin
             .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
         }
@@ -724,7 +730,7 @@ struct DebtFormView: View {
             ZStack {
                 Color.customBackground.ignoresSafeArea()
                 
-                ScrollView {
+            ScrollView {
                     VStack(spacing: 24) {
                         // Custom Segmented Control at Top
                         typeSegmentedControl
@@ -736,7 +742,7 @@ struct DebtFormView: View {
                             .padding(.horizontal)
                         
                         // Input Fields
-                        VStack(spacing: 16) {
+                    VStack(spacing: 16) {
                             // Contact Row
                             DebtContactRow(
                                 contact: selectedContact,
@@ -780,8 +786,8 @@ struct DebtFormView: View {
                         .padding(.horizontal)
                         .padding(.top, 8)
                         .padding(.bottom, 20)
-                    }
                 }
+            }
                 .simultaneousGesture(
                     TapGesture().onEnded { _ in
                         dismissKeyboard()
@@ -815,7 +821,7 @@ struct DebtFormView: View {
                     if let transaction = editingTransaction {
                         onDelete?(transaction)
                         dismiss()
-                    }
+                }
                 }
             } message: {
                 Text("Are you sure you want to delete this transaction? This action cannot be undone.")
@@ -867,8 +873,8 @@ struct DebtFormView: View {
                     amountText = ""
                 } else if amountText.isEmpty || abs(newValue - (Double(amountText) ?? 0)) > 0.01 {
                     amountText = formatAmount(newValue)
-                }
             }
+        }
         }
         .presentationDetents([.large])
     }
@@ -905,27 +911,27 @@ struct DebtFormView: View {
     private var typeSegmentedControl: some View {
         HStack(spacing: 0) {
             ForEach([DebtTransactionType.lent, DebtTransactionType.borrowed]) { type in
-                Button {
+        Button {
                     dismissKeyboard()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         transactionType = type
                     }
                 } label: {
                     Text(type.title)
-                        .font(.subheadline.weight(.semibold))
+                            .font(.subheadline.weight(.semibold))
                         .foregroundStyle(transactionType == type ? .white : .primary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(transactionType == type ? type.direction.color : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
+            )
+        }
+        .buttonStyle(.plain)
+    }
         }
         .padding(4)
-        .background(Color.customCardBackground)
+            .background(Color.customCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
     
@@ -934,7 +940,7 @@ struct DebtFormView: View {
         VStack(spacing: 8) {
             Text("Amount")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                        .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Spacer()
                 
@@ -948,13 +954,13 @@ struct DebtFormView: View {
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .focused($isAmountFocused)
-                    .foregroundStyle(.primary)
+                        .foregroundStyle(.primary)
                     .frame(minWidth: 120)
                     .onChange(of: amountText) { oldValue, newValue in
                         handleAmountInput(newValue)
-                    }
             }
-            .frame(maxWidth: .infinity)
+            }
+                .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
         }
     }
@@ -962,7 +968,14 @@ struct DebtFormView: View {
     // MARK: - Amount Input Handler
     private func handleAmountInput(_ newValue: String) {
         // Normalize input to accept both dots and commas
-        let cleaned = normalizeDecimalInput(newValue)
+        var cleaned = newValue.replacingOccurrences(of: ",", with: ".")
+        cleaned = cleaned.filter { $0.isNumber || $0 == "." }
+        let components = cleaned.split(separator: ".", omittingEmptySubsequences: false)
+        if components.count > 2 {
+            let firstPart = String(components[0])
+            let rest = components.dropFirst().joined(separator: "")
+            cleaned = firstPart + "." + rest
+        }
         
         // Handle leading zero replacement
         if amount == 0 && !cleaned.isEmpty {
@@ -973,8 +986,8 @@ struct DebtFormView: View {
                 }
                 return
             }
-        }
-        
+                }
+                
         // Update the text
         amountText = cleaned
         
@@ -995,9 +1008,9 @@ struct DebtFormView: View {
             let formatted = String(format: "%.2f", amount)
             // Remove trailing zeros
             return formatted.trimmingCharacters(in: CharacterSet(charactersIn: "0")).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            }
         }
     }
-}
 
 // MARK: - Debt Contact Row Component
 struct DebtContactRow: View {
@@ -1010,22 +1023,22 @@ struct DebtContactRow: View {
         } label: {
             HStack(spacing: 16) {
                 if let contact = contact {
-                    ZStack {
-                        Circle()
+                ZStack {
+                    Circle()
                             .fill(contact.color.opacity(0.15))
                             .frame(width: 32, height: 32)
                         Text(contact.initials)
                             .font(.subheadline)
                             .foregroundStyle(contact.color)
-                    }
+                }
                     .frame(width: 24)
                     
                     Text("Contact")
                         .font(.body)
                         .foregroundStyle(.primary)
-                    
-                    Spacer()
-                    
+                
+                Spacer()
+                
                     Text(contact.name)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -1104,7 +1117,7 @@ struct PaymentDetailView: View {
                     }
                     
                     DetailRow(label: "Monthly Payment", value: currencyString(payment.amount, code: settings.currency))
-                    DetailRow(label: "Next Payment", value: shortDate(payment.date))
+                    DetailRow(label: "Next Payment", value: payment.date.formatted(.dateTime.day().month(.abbreviated)))
                     DetailRow(label: "Account", value: payment.accountName)
                 }
                 .padding()
@@ -1395,6 +1408,7 @@ struct TransactionsView: View {
     @EnvironmentObject var transactionManager: TransactionManager
     @EnvironmentObject var accountManager: AccountManager
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    @EnvironmentObject var creditManager: CreditManager
     @State private var searchText = ""
     @State private var selectedCategory: String?
     @State private var selectedType: TransactionType?
@@ -1406,7 +1420,8 @@ struct TransactionsView: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var showPlannedPayments = false
     @State private var selectedTab: TransactionTab = .past
-    @State private var subscriptionSheetData: SubscriptionSheetData? // Single state for payment and occurrence date
+    @State private var selectedPlannedPayment: PlannedPayment? // For editing scheduled transactions
+    @State private var selectedOccurrenceDate: Date? // The specific occurrence date when paying early
     @State private var scheduledTransactionToDelete: Transaction? // For delete confirmation
     @State private var plannedPaymentToDeleteFromEdit: PlannedPayment? // For delete confirmation from edit form
     @State private var showDeleteScheduledAlert = false
@@ -1857,13 +1872,11 @@ struct TransactionsView: View {
                                                 ForEach(groupedScheduled[day] ?? [], id: \.id) { transaction in
                                                     // ALL transactions here are scheduled (from upcomingTransactions)
                                                     Button {
-                                                        // Capture the occurrence date and payment together
-                                                        let occurrenceDate = transaction.occurrenceDate ?? transaction.date
+                                                        // Capture the occurrence date before opening the form
+                                                        selectedOccurrenceDate = transaction.occurrenceDate ?? transaction.date
+                                                        // Find and open the source PlannedPayment for editing/deletion
                                                         if let sourcePayment = findSourcePlannedPayment(for: transaction) {
-                                                            subscriptionSheetData = SubscriptionSheetData(
-                                                                payment: sourcePayment,
-                                                                occurrenceDate: occurrenceDate
-                                                            )
+                                                            selectedPlannedPayment = sourcePayment
                                                         }
                                                     } label: {
                                                         TransactionRow(transaction: transaction)
@@ -1878,7 +1891,7 @@ struct TransactionsView: View {
                                                             Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
                                                         }
                                                     }
-                                                    .padding(.bottom, 8)
+                                                        .padding(.bottom, 8)
                                                 }
                                             }
                                         }
@@ -1956,8 +1969,6 @@ struct TransactionsView: View {
                     .onAppear {
                         // Reset scroll position when view appears
                         proxy.scrollTo("top", anchor: .top)
-                        // Auto-convert scheduled payments that have reached their execution date
-                        convertScheduledPaymentsToTransactions()
                         // Clean up old subscription transactions
                         subscriptionManager.cleanupOldTransactions(in: transactionManager)
                         subscriptionManager.generateUpcomingTransactions()
@@ -2008,35 +2019,47 @@ struct TransactionsView: View {
                 .environmentObject(transactionManager)
                 .id(currentFormMode) // Force recreation when mode changes
             }
-            .sheet(item: $subscriptionSheetData) { sheetData in
+            .sheet(item: $selectedPlannedPayment) { payment in
                 CustomSubscriptionFormView(
-                    paymentType: sheetData.payment.type,
-                    existingPayment: sheetData.payment,
-                    initialIsIncome: sheetData.payment.isIncome,
-                    occurrenceDate: sheetData.occurrenceDate,
+                    paymentType: payment.type,
+                    existingPayment: payment,
+                    initialIsIncome: payment.isIncome,
+                    occurrenceDate: selectedOccurrenceDate,
                     onSave: { updatedPayment in
                         subscriptionManager.updateSubscription(updatedPayment)
-                        subscriptionSheetData = nil
+                        selectedPlannedPayment = nil
+                        selectedOccurrenceDate = nil
                     },
                     onCancel: {
-                        subscriptionSheetData = nil
+                        selectedPlannedPayment = nil
+                        selectedOccurrenceDate = nil
                     },
                     onDelete: { paymentToDelete in
                         // If it's a repeating payment, show confirmation modal
                         if paymentToDelete.isRepeating {
                             plannedPaymentToDeleteFromEdit = paymentToDelete
                             showDeleteScheduledAlert = true
-                            subscriptionSheetData = nil
+                            selectedPlannedPayment = nil
+                            selectedOccurrenceDate = nil
                         } else {
                             // Non-repeating, delete directly
                             subscriptionManager.deleteSubscription(paymentToDelete)
-                            subscriptionSheetData = nil
+                            selectedPlannedPayment = nil
+                            selectedOccurrenceDate = nil
                         }
                     },
                     onPay: { occurrenceDate in
                         // Pay early: create transaction and skip the occurrence
-                        subscriptionManager.payEarly(subscription: sheetData.payment, occurrenceDate: occurrenceDate, transactionManager: transactionManager)
-                        subscriptionSheetData = nil
+                        subscriptionManager.payEarly(
+                            subscription: payment,
+                            occurrenceDate: occurrenceDate,
+                            transactionManager: transactionManager,
+                            creditManager: creditManager,
+                            accountManager: accountManager,
+                            currency: settings.currency
+                        )
+                        selectedPlannedPayment = nil
+                        selectedOccurrenceDate = nil
                     }
                 )
                 .environmentObject(settings)
@@ -2257,27 +2280,27 @@ struct TransactionsView: View {
     
     // Standardized Floating Action Button
     private var floatingActionButton: some View {
-        VStack {
-            Spacer()
-            HStack {
+            VStack {
                 Spacer()
+                HStack {
+                    Spacer()
                 
                 // --- BUTTON ---
-                Button {
+                                Button {
                     startAddingTransaction(for: .expense)
-                } label: {
+                                } label: {
                     Image(systemName: "plus")
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
+                                            .foregroundStyle(.white)
                         .frame(width: 56, height: 56) // Fixed standard size
-                        .background(
+                                            .background(
                             Circle()
                                 .fill(Color.accentColor) // <--- Change this per view
                                 .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 6)
                         )
                 }
                 // ----------------
-            }
+                    }
             .padding(.trailing, 20) // Fixed right margin
             .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
         }
@@ -2371,9 +2394,9 @@ struct TransactionsView: View {
             showTransactionForm = false
         } else {
             // Sheet is closed, set mode and open immediately
-            currentFormMode = .edit(transaction.id)
-            draftTransaction = TransactionDraft(transaction: transaction)
-            showTransactionForm = true
+        currentFormMode = .edit(transaction.id)
+        draftTransaction = TransactionDraft(transaction: transaction)
+        showTransactionForm = true
         }
     }
     
@@ -2389,7 +2412,7 @@ struct TransactionsView: View {
             oldTransaction = transactionManager.transactions.first(where: { $0.id == id })
             let updated = draft.toTransaction(existingId: id)
             transactionManager.updateTransaction(updated)
-        }
+            }
         
         // Update account balances using draft (which has toAccountName for transfers)
         updateAccountBalances(oldTransaction: oldTransaction, newDraft: draft)
@@ -2402,97 +2425,6 @@ struct TransactionsView: View {
         transactionManager.deleteTransaction(transaction)
         // Revert account balance changes for deleted transaction
         updateAccountBalances(oldTransaction: transaction, newDraft: nil)
-    }
-    
-    // MARK: - Auto-Convert Scheduled Payments to Transactions
-    // Convert scheduled payments that have reached their execution date (today) to actual transactions
-    private func convertScheduledPaymentsToTransactions() {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        
-        // Get all repeating planned payments
-        let repeatingPayments = subscriptionManager.subscriptions.filter { $0.isRepeating }
-        
-        for payment in repeatingPayments {
-            guard let frequencyString = payment.repetitionFrequency,
-                  let frequency = RepetitionFrequency(rawValue: frequencyString),
-                  let interval = payment.repetitionInterval else {
-                continue
-            }
-            
-            let weekdays = payment.selectedWeekdays.map { Set($0) } ?? []
-            let startDate = calendar.startOfDay(for: payment.date)
-            
-            // Generate all scheduled occurrences up to today
-            var currentDate = startDate
-            var checkedDates: Set<Date> = []
-            var iterationCount = 0
-            let maxIterations = 1000
-            
-            // Generate occurrences from start date up to today
-            while currentDate <= today && iterationCount < maxIterations {
-                iterationCount += 1
-                
-                // Check if this date matches the repetition pattern and is today or in the past
-                if currentDate <= today && !checkedDates.contains(currentDate) {
-                    checkedDates.insert(currentDate)
-                    
-                    // Check if this date should have an occurrence based on repetition
-                    if matchesRepetitionPattern(
-                        date: currentDate,
-                        startDate: startDate,
-                        frequency: frequency,
-                        interval: interval,
-                        weekdays: weekdays
-                    ) {
-                        // Check if a transaction for this payment on this date already exists
-                        let existingTransaction = transactionManager.transactions.first { transaction in
-                            transaction.title == payment.title &&
-                            transaction.amount == payment.amount &&
-                            calendar.isDate(transaction.date, inSameDayAs: currentDate) &&
-                            transaction.accountName == payment.accountName
-                        }
-                        
-                        if existingTransaction == nil {
-                            // Convert to transaction (only if it's today - past dates are already missed)
-                            if calendar.isDate(currentDate, inSameDayAs: today) {
-                                let transaction = Transaction(
-                                    id: UUID(),
-                                    title: payment.title,
-                                    category: payment.category ?? "General",
-                                    amount: payment.amount,
-                                    date: currentDate,
-                                    type: payment.isIncome ? .income : .expense,
-                                    accountName: payment.accountName,
-                                    toAccountName: nil,
-                                    currency: settings.currency,
-                                    sourcePlannedPaymentId: payment.id, // ISSUE 2 FIX: Store source payment ID
-                                    occurrenceDate: currentDate // ISSUE 2 FIX: Store occurrence date
-                                )
-                                transactionManager.addTransaction(transaction)
-                                // Update account balance for the new transaction
-                                updateAccountBalances(oldTransaction: nil, newDraft: TransactionDraft(
-                                    title: transaction.title,
-                                    category: transaction.category,
-                                    amount: transaction.amount,
-                                    date: transaction.date,
-                                    type: transaction.type,
-                                    accountName: transaction.accountName,
-                                    currency: transaction.currency
-                                ))
-                            }
-                        }
-                    }
-                }
-                
-                // Move to next day to check
-                if let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDate) {
-                    currentDate = nextDay
-                } else {
-                    break
-                }
-            }
-        }
     }
     
     // CLEAN: Check if a transaction is a scheduled occurrence
@@ -2584,24 +2516,48 @@ struct TransactionsView: View {
         // Use unified deletion function (REQUIREMENT D)
         var subscriptionId: UUID?
         var transactionDate: Date?
+        let calendar = Calendar.current
         
+        // CRITICAL FIX: Always use the transaction's date, even if sourcePlannedPaymentId is missing
+        transactionDate = calendar.startOfDay(for: transaction.date)
+        
+        // Try to find subscription ID
         if let id = transaction.sourcePlannedPaymentId {
+            // Direct lookup - most reliable
             subscriptionId = id
-            let calendar = Calendar.current
-            transactionDate = calendar.startOfDay(for: transaction.date)
         } else if let sourcePayment = findSourcePlannedPayment(for: transaction) {
             // Fallback for legacy transactions
             subscriptionId = sourcePayment.id
-            let calendar = Calendar.current
-            transactionDate = calendar.startOfDay(for: transaction.date)
+        } else {
+            // Last resort: Try to find by matching transaction details in upcomingTransactions
+            // This handles edge cases where the transaction might not be properly linked
+            if let matchingSubscription = subscriptionManager.subscriptions.first(where: { sub in
+                sub.isRepeating &&
+                transaction.title == sub.title &&
+                abs(transaction.amount - sub.amount) < 0.01 &&
+                transaction.accountName == sub.accountName &&
+                transaction.type == (sub.isIncome ? .income : .expense)
+            }) {
+                subscriptionId = matchingSubscription.id
+            }
         }
         
-        if let id = subscriptionId, let date = transactionDate {
-            subscriptionManager.deleteOccurrence(subscriptionId: id, occurrenceDate: date)
-            // Force UI refresh in both Planned and Future tabs
-            subscriptionManager.objectWillChange.send()
-            // Regenerate to ensure both tabs see the update immediately
-            subscriptionManager.generateUpcomingTransactions()
+        // CRITICAL: Always attempt deletion if we have a date, even if subscriptionId is missing
+        // This ensures subsequent deletions work even if the first deletion caused issues
+        if let date = transactionDate {
+            if let id = subscriptionId {
+                // Normal path: delete via SubscriptionManager
+                subscriptionManager.deleteOccurrence(subscriptionId: id, occurrenceDate: date)
+                subscriptionManager.objectWillChange.send()
+                subscriptionManager.generateUpcomingTransactions()
+            } else {
+                // Fallback: If we can't find the subscription, at least remove from TransactionManager
+                // and regenerate to clean up the UI
+                if transactionManager.transactions.contains(where: { $0.id == transaction.id }) {
+                    transactionManager.deleteTransaction(transaction)
+                }
+                subscriptionManager.generateUpcomingTransactions()
+            }
         }
         
         // CRITICAL: Also remove the transaction from TransactionManager if it exists there
@@ -2884,6 +2840,11 @@ struct TransactionRow: View {
     @EnvironmentObject var settings: AppSettings
     
     private var categoryIcon: String {
+        // For transfers, always return transfer icon
+        if transaction.type == .transfer {
+            return "arrow.left.arrow.right"
+        }
+        
         // Handle subcategory format: "Category > Subcategory"
         if transaction.category.contains(" > ") {
             let parts = transaction.category.split(separator: " > ")
@@ -2899,25 +2860,25 @@ struct TransactionRow: View {
                 return category.iconName
             }
         } else {
-            if let category = settings.categories.first(where: { $0.name == transaction.category }) {
-                return category.iconName
+        if let category = settings.categories.first(where: { $0.name == transaction.category }) {
+            return category.iconName
             }
         }
         return transaction.type.iconName
     }
     
     private var categoryColor: Color {
-        // Handle subcategory format: "Category > Subcategory"
-        let categoryName: String
-        if transaction.category.contains(" > ") {
-            categoryName = String(transaction.category.split(separator: " > ").first ?? "")
-        } else {
-            categoryName = transaction.category
+        // Strict color coding based on transaction type (priority over category color)
+        switch transaction.type {
+        case .transfer:
+            return .blue
+        case .income:
+            return .green
+        case .expense:
+            return .red
+        case .debt:
+            return .orange
         }
-        if let category = settings.categories.first(where: { $0.name == categoryName }) {
-            return category.color
-        }
-        return transaction.type.color
     }
     
     var body: some View {
@@ -3044,6 +3005,7 @@ struct TransactionFormView: View {
     @EnvironmentObject var debtManager: DebtManager
     @EnvironmentObject var subscriptionManager: SubscriptionManager
     @EnvironmentObject var transactionManager: TransactionManager
+    @EnvironmentObject var accountManager: AccountManager
     @State private var showCategoryPicker = false
     @State private var showAccountPicker = false
     @State private var showToAccountPicker = false
@@ -3192,7 +3154,7 @@ struct TransactionFormView: View {
             ZStack {
                 Color.customBackground.ignoresSafeArea()
                 
-                ScrollView {
+            ScrollView {
                     VStack(spacing: 24) {
                         // Segmented Control at Top
                         typeSegmentedControl
@@ -3510,28 +3472,74 @@ struct TransactionFormView: View {
         .presentationDetents([.large])
     }
     
+    // MARK: - Is Credit Repayment
+    private var isCreditRepayment: Bool {
+        guard draft.type == .transfer,
+              let toAccountName = draft.toAccountName else {
+            return false
+        }
+        return accountManager.accounts.first(where: { $0.name == toAccountName })?.accountType == .credit
+    }
+    
     // MARK: - Type Segmented Control
     private var typeSegmentedControl: some View {
         HStack(spacing: 0) {
-            ForEach([TransactionType.expense, TransactionType.income, TransactionType.transfer, TransactionType.debt]) { type in
-                Button {
-                    dismissKeyboard()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        draft.type = type
-                    }
-                } label: {
-                    Text(type.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(draft.type == type ? .white : .primary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(draft.type == type ? type.color : Color.clear)
-                        )
+            // Expense Button
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    draft.type = .expense
                 }
-                .buttonStyle(.plain)
+            } label: {
+                Text(String(localized: "Expense", comment: "Expense type"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(draft.type == .expense ? .white : .primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(draft.type == .expense ? Color.red : Color.clear)
+                    )
             }
+            .buttonStyle(.plain)
+            .disabled(isCreditRepayment)
+            
+            // Income Button
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    draft.type = .income
+                }
+            } label: {
+                Text(String(localized: "Income", comment: "Income type"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(draft.type == .income ? .white : .primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(draft.type == .income ? Color.green : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(isCreditRepayment)
+            
+            // Transfer Button
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    draft.type = .transfer
+                }
+            } label: {
+                Text(String(localized: "Transfer", comment: "Transfer type"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(draft.type == .transfer ? .white : .primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(draft.type == .transfer ? Color.blue : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(isCreditRepayment)
         }
         .padding(4)
         .background(Color.customCardBackground)
@@ -3548,7 +3556,7 @@ struct TransactionFormView: View {
                 Spacer()
                 
                 // Small, subtle icon for transaction type (always shown, colored only)
-                if draft.type == .transfer {
+                        if draft.type == .transfer {
                     Image(systemName: transferIcon)
                         .font(.title2)
                         .foregroundStyle(themeColor)
@@ -3581,7 +3589,14 @@ struct TransactionFormView: View {
     // MARK: - Amount Input Handler
     private func handleAmountInput(_ newValue: String) {
         // Normalize input to accept both dots and commas
-        let cleaned = normalizeDecimalInput(newValue)
+        var cleaned = newValue.replacingOccurrences(of: ",", with: ".")
+        cleaned = cleaned.filter { $0.isNumber || $0 == "." }
+        let components = cleaned.split(separator: ".", omittingEmptySubsequences: false)
+        if components.count > 2 {
+            let firstPart = String(components[0])
+            let rest = components.dropFirst().joined(separator: "")
+            cleaned = firstPart + "." + rest
+        }
         
         // Handle leading zero replacement: if current amount is 0 and user types a digit, replace 0
         if draft.amount == 0 && !cleaned.isEmpty {
@@ -3640,12 +3655,12 @@ struct TransactionFormView: View {
                     .labelsHidden()
             }
             .padding(16)
-            .background(Color.customCardBackground)
+        .background(Color.customCardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
+        .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
             .onChange(of: isRepeating) { _, _ in
                 dismissKeyboard()
             }
@@ -3682,8 +3697,8 @@ struct TransactionFormView: View {
                                     )
                             }
                             .buttonStyle(.plain)
-                        }
-                    }
+            }
+        }
                     .padding(4)
                     .background(Color.customCardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -3696,14 +3711,14 @@ struct TransactionFormView: View {
                     if repetitionFrequency == .week {
                         HStack(spacing: 8) {
                             ForEach(weekdayOptions, id: \.value) { weekday in
-                                Button {
+        Button {
                                     dismissKeyboard()
                                     withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
                                         if selectedWeekdays.contains(weekday.value) {
                                             selectedWeekdays.remove(weekday.value)
                                         } else {
                                             selectedWeekdays.insert(weekday.value)
-                                        }
+                    }
                                     }
                                 } label: {
                                     Text(weekday.shortName)
@@ -3716,7 +3731,7 @@ struct TransactionFormView: View {
                                         )
                                 }
                                 .buttonStyle(.plain)
-                            }
+                    }
                         }
                         .padding(.vertical, 4)
                     }
@@ -3727,7 +3742,7 @@ struct TransactionFormView: View {
                             Text(String(localized: "Repeat every", comment: "Repeat every label"))
                                 .font(.body.weight(.medium))
                                 .foregroundStyle(.red)
-                            Spacer()
+                Spacer()
                             Text("\(repetitionInterval) \(repetitionFrequency.localizedUnit)")
                                 .font(.body.weight(.medium))
                                 .foregroundStyle(.red)
@@ -3750,15 +3765,15 @@ struct TransactionFormView: View {
                         .onChange(of: repetitionInterval) { _, _ in
                             dismissKeyboard()
                         }
-                    }
-                    .padding(16)
-                    .background(Color.customCardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
-                }
+            }
+            .padding(16)
+            .background(Color.customCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
                 .padding(16)
                 .background(Color.customCardBackground.opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -3766,7 +3781,7 @@ struct TransactionFormView: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
-            }
+    }
         }
     }
     
@@ -3798,7 +3813,7 @@ struct TransactionFormView: View {
                 let aValue = a.value == 0 ? 7 : a.value
                 let bValue = b.value == 0 ? 7 : b.value
                 return aValue < bValue
-            }
+                    }
         } else {
             // Monday first
             return weekdays.sorted { (a: WeekdayOption, b: WeekdayOption) in
@@ -3929,8 +3944,8 @@ struct TransactionFormView: View {
                     
                     checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? checkDate
                     daysChecked += 1
-                }
-                
+            }
+            
                 // If no matching weekday found in 2 weeks, fall back to adding interval weeks from start
                 var resultDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
                 // Ensure it's in the future
@@ -3983,12 +3998,12 @@ struct TransactionFormView: View {
                                 .font(.system(size: 48))
                                 .foregroundStyle(.secondary)
                             Text("No categories available")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                        }
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
                         .frame(maxWidth: .infinity, minHeight: 400)
                         .padding(.top, 100)
-                    } else {
+                } else {
                         ForEach(availableCategories) { category in
                         VStack(spacing: 0) {
                             // Category itself (can be selected) - make entire row tappable to expand if has subcategories
@@ -4010,33 +4025,33 @@ struct TransactionFormView: View {
                             } label: {
                                 HStack(spacing: 14) {
                                     // Category icon
-                                    ZStack {
-                                        Circle()
+                    ZStack {
+                        Circle()
                                             .fill(category.color.opacity(0.15))
-                                            .frame(width: 44, height: 44)
+                            .frame(width: 44, height: 44)
                                         Image(systemName: category.iconName)
                                             .font(.title3)
                                             .foregroundStyle(category.color)
-                                    }
+                    }
                                     
-                                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 2) {
                                         Text(category.name)
                                             .font(.body.weight(.medium))
                                             .foregroundStyle(.primary)
                                         
                                         if !category.subcategories.isEmpty {
                                             Text("\(category.subcategories.count) \(category.subcategories.count == 1 ? "subcategory" : "subcategories")")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                                     
-                                    Spacer()
+                Spacer()
                                     
                                     if !category.subcategories.isEmpty {
                                         // Show chevron for categories with subcategories
                                         Image(systemName: expandedCategories.contains(category.id) ? "chevron.down" : "chevron.right")
-                                            .foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary)
                                             .font(.subheadline)
                                             .fontWeight(.semibold)
                                     } else if draft.category == category.name || draft.category.hasPrefix("\(category.name) >") {
@@ -4045,13 +4060,13 @@ struct TransactionFormView: View {
                                             .foregroundStyle(category.color)
                                             .font(.title3)
                                     }
-                                }
+            }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 14)
-                                .background(Color.customCardBackground)
+            .background(Color.customCardBackground)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
                             
                             // Subcategories (shown when expanded) - beautiful nested design
                             if expandedCategories.contains(category.id) && !category.subcategories.isEmpty {
@@ -5020,7 +5035,7 @@ struct AccountDetailsView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
                     } else {
-                        ForEach(accountTransactions) { transaction in
+                            ForEach(accountTransactions) { transaction in
                             Button {
                                 startEditing(transaction)
                             } label: {
@@ -5044,7 +5059,7 @@ struct AccountDetailsView: View {
         }
         .background(Color.customBackground)
         .navigationBarTitleDisplayMode(.inline)
-                .sheet(isPresented: $showAccountForm) {
+        .sheet(isPresented: $showAccountForm) {
             AccountFormView(
                 account: currentAccount ?? account,
                 onSave: { updatedAccount in

@@ -11,6 +11,7 @@ struct AddCreditFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    @EnvironmentObject var accountManager: AccountManager
     
     let existingCredit: Credit?
     let onSave: (Credit) -> Void
@@ -34,9 +35,9 @@ struct AddCreditFormView: View {
     @FocusState private var isAmountFocused: Bool
     @State private var amountText: String = ""
     
-    // Get accounts from settings or use sample
+    // Get accounts from accountManager, excluding credit accounts
     private var accounts: [Account] {
-        Account.sample // You may want to get this from settings or a manager
+        accountManager.accounts.filter { $0.accountType != .credit }
     }
     
     private var selectedAccount: Account? {
@@ -89,7 +90,14 @@ struct AddCreditFormView: View {
     
     private func handleAmountInput(_ newValue: String) {
         // Normalize input to accept both dots and commas
-        let cleaned = normalizeDecimalInput(newValue)
+        var cleaned = newValue.replacingOccurrences(of: ",", with: ".")
+        cleaned = cleaned.filter { $0.isNumber || $0 == "." }
+        let components = cleaned.split(separator: ".", omittingEmptySubsequences: false)
+        if components.count > 2 {
+            let firstPart = String(components[0])
+            let rest = components.dropFirst().joined(separator: "")
+            cleaned = firstPart + "." + rest
+        }
         
         if totalAmount == 0 && !cleaned.isEmpty {
             if let firstChar = cleaned.first, firstChar.isNumber, firstChar != "0" {
@@ -181,7 +189,15 @@ struct AddCreditFormView: View {
                                     get: { interestRate },
                                     set: { newValue in
                                         // Normalize input to accept both dots and commas
-                                        interestRate = normalizeDecimalInput(newValue)
+                                        var cleaned = newValue.replacingOccurrences(of: ",", with: ".")
+                                        cleaned = cleaned.filter { $0.isNumber || $0 == "." }
+                                        let components = cleaned.split(separator: ".", omittingEmptySubsequences: false)
+                                        if components.count > 2 {
+                                            let firstPart = String(components[0])
+                                            let rest = components.dropFirst().joined(separator: "")
+                                            cleaned = firstPart + "." + rest
+                                        }
+                                        interestRate = cleaned
                                     }
                                 ),
                                 placeholder: "Optional (e.g., 5.5)"
@@ -242,6 +258,32 @@ struct AddCreditFormView: View {
                                 monthsLeft = monthlyPayment > 0 ? max(1, Int(ceil(remaining / monthlyPayment))) : 1
                             }
                             
+                            // Create or update the linked Account for this credit
+                            let creditAccountId: UUID
+                            if let existingAccountId = existingCredit?.linkedAccountId,
+                               let existingAccount = accountManager.getAccount(id: existingAccountId) {
+                                // Update existing account
+                                var updatedAccount = existingAccount
+                                updatedAccount.name = title.trimmingCharacters(in: .whitespaces)
+                                updatedAccount.balance = -remaining // Negative balance represents debt
+                                accountManager.updateAccount(updatedAccount)
+                                creditAccountId = existingAccountId
+                            } else {
+                                // Create new account for this credit
+                                let creditAccount = Account(
+                                    name: title.trimmingCharacters(in: .whitespaces),
+                                    balance: -totalAmount, // Negative initial balance
+                                    includedInTotal: true,
+                                    accountType: .credit,
+                                    currency: settings.currency,
+                                    isPinned: false,
+                                    isSavings: false,
+                                    iconName: "creditcard.fill"
+                                )
+                                accountManager.addAccount(creditAccount)
+                                creditAccountId = creditAccount.id
+                            }
+                            
                             let credit = Credit(
                                 id: existingCredit?.id ?? UUID(),
                                 title: title.trimmingCharacters(in: .whitespaces),
@@ -254,27 +296,48 @@ struct AddCreditFormView: View {
                                 interestRate: interestRateValue,
                                 startDate: startDate,
                                 accountName: selectedAccountName,
-                                termMonths: termMonthsValue
+                                termMonths: termMonthsValue,
+                                linkedAccountId: creditAccountId
                             )
                             
                             // Save credit to CreditManager
                             onSave(credit)
                             
-                            // If toggle is ON, also create a PlannedPayment and save to SubscriptionManager
+                            // If toggle is ON, also create a PlannedPayment as a Transfer and save to SubscriptionManager
                             if trackInPlannedPayments {
+                                // Get the credit account name (should match the credit title)
+                                let creditAccountName = title.trimmingCharacters(in: .whitespaces)
+                                
+                                // Find the first non-credit account for the source (default to "Main Card" if not found)
+                                let sourceAccountName: String
+                                if let selectedAccountName = selectedAccountName,
+                                   let account = accountManager.getAccount(name: selectedAccountName),
+                                   account.accountType != .credit {
+                                    sourceAccountName = selectedAccountName
+                                } else if let firstNonCreditAccount = accountManager.accounts.first(where: { $0.accountType != .credit }) {
+                                    sourceAccountName = firstNonCreditAccount.name
+                                } else {
+                                    sourceAccountName = "Main Card"
+                                }
+                                
                                 let plannedPayment = PlannedPayment(
-                                    title: title.trimmingCharacters(in: .whitespaces),
+                                    title: "Repayment: \(creditAccountName)",
                                     amount: monthlyPayment,
                                     date: dueDate,
                                     status: .upcoming,
-                                    accountName: selectedAccountName ?? "Main Card",
+                                    accountName: sourceAccountName, // From account (source)
+                                    toAccountName: creditAccountName, // To account (credit account)
                                     category: "Debt",
                                     type: .loan,
                                     isIncome: false,
                                     totalLoanAmount: totalAmount,
                                     remainingBalance: remaining,
                                     startDate: startDate,
-                                    interestRate: interestRateValue
+                                    interestRate: interestRateValue,
+                                    linkedCreditId: credit.id,
+                                    isRepeating: true,
+                                    repetitionFrequency: "month",
+                                    repetitionInterval: 1
                                 )
                                 subscriptionManager.addSubscription(plannedPayment)
                             }
@@ -482,7 +545,14 @@ struct CreditAmountRow: View {
                 .focused($isFocused)
                 .onChange(of: amountText) { oldValue, newValue in
                     // Normalize input to accept both dots and commas
-                    let cleaned = normalizeDecimalInput(newValue)
+                    var cleaned = newValue.replacingOccurrences(of: ",", with: ".")
+                    cleaned = cleaned.filter { $0.isNumber || $0 == "." }
+                    let components = cleaned.split(separator: ".", omittingEmptySubsequences: false)
+                    if components.count > 2 {
+                        let firstPart = String(components[0])
+                        let rest = components.dropFirst().joined(separator: "")
+                        cleaned = firstPart + "." + rest
+                    }
                     amountText = cleaned
                     if let value = Double(cleaned) {
                         amount = value

@@ -11,6 +11,7 @@ enum AccountType: String, CaseIterable, Identifiable, Codable {
     case cash
     case card
     case bankAccount
+    case credit
     
     var id: String { rawValue }
     
@@ -19,6 +20,7 @@ enum AccountType: String, CaseIterable, Identifiable, Codable {
         case .cash: return "Cash"
         case .card: return "Card"
         case .bankAccount: return "Bank Account"
+        case .credit: return "Credit"
         }
     }
     
@@ -27,6 +29,7 @@ enum AccountType: String, CaseIterable, Identifiable, Codable {
         case .cash: return "banknote"
         case .card: return "creditcard"
         case .bankAccount: return "building.columns"
+        case .credit: return "creditcard.fill"
         }
     }
 }

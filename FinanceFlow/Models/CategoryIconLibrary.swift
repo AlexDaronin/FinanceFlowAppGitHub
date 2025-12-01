@@ -130,6 +130,8 @@ struct CategoryIconLibrary {
             return "creditcard.fill"
         case .bankAccount:
             return "building.columns.fill"
+        case .credit:
+            return "creditcard.fill"
         }
     }
 }

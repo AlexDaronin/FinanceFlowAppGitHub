@@ -8,20 +8,6 @@
 import Foundation
 import SwiftUI
 
-// MARK: - Subscription Sheet Data Wrapper
-// Wrapper struct to ensure payment and occurrence date are always synchronized
-struct SubscriptionSheetData: Identifiable {
-    let id: UUID
-    let payment: PlannedPayment
-    let occurrenceDate: Date
-    
-    init(payment: PlannedPayment, occurrenceDate: Date) {
-        self.id = payment.id
-        self.payment = payment
-        self.occurrenceDate = occurrenceDate
-    }
-}
-
 enum PlannedPaymentType: Codable {
     case subscription
     case loan
@@ -43,6 +29,7 @@ struct PlannedPayment: Identifiable, Codable {
     let date: Date
     let status: PlannedPaymentStatus
     let accountName: String
+    let toAccountName: String? // For transfer transactions (e.g., to credit account)
     let category: String?
     let type: PlannedPaymentType
     let isIncome: Bool // true for income (salary, etc.), false for expenses (subscriptions)
@@ -52,6 +39,7 @@ struct PlannedPayment: Identifiable, Codable {
     let remainingBalance: Double? // Remaining balance (nil for subscriptions)
     let startDate: Date? // Loan start date (nil for subscriptions)
     let interestRate: Double? // Interest rate percentage (optional)
+    let linkedCreditId: UUID? // Link to a Credit for automatic balance updates
     
     // Repetition properties
     let isRepeating: Bool // Whether this payment repeats
@@ -68,6 +56,7 @@ struct PlannedPayment: Identifiable, Codable {
         date: Date,
         status: PlannedPaymentStatus,
         accountName: String,
+        toAccountName: String? = nil,
         category: String? = nil,
         type: PlannedPaymentType = .subscription,
         isIncome: Bool = false,
@@ -75,6 +64,7 @@ struct PlannedPayment: Identifiable, Codable {
         remainingBalance: Double? = nil,
         startDate: Date? = nil,
         interestRate: Double? = nil,
+        linkedCreditId: UUID? = nil,
         isRepeating: Bool = false,
         repetitionFrequency: String? = nil,
         repetitionInterval: Int? = nil,
@@ -88,6 +78,7 @@ struct PlannedPayment: Identifiable, Codable {
         self.date = date
         self.status = status
         self.accountName = accountName
+        self.toAccountName = toAccountName
         self.category = category
         self.type = type
         self.isIncome = isIncome
@@ -95,6 +86,7 @@ struct PlannedPayment: Identifiable, Codable {
         self.remainingBalance = remainingBalance
         self.startDate = startDate
         self.interestRate = interestRate
+        self.linkedCreditId = linkedCreditId
         self.isRepeating = isRepeating
         self.repetitionFrequency = repetitionFrequency
         self.repetitionInterval = repetitionInterval

@@ -191,9 +191,3 @@
 "Add" = "Добавить";
 "Month" = "Месяц";
 "Year" = "Год";
-
-/* Deletion Modal (REQUIREMENT D) */
-"Delete scheduled transaction?" = "Удалить запланированную транзакцию?";
-"Delete only this occurrence or the entire chain of future repeats?" = "Удалить только эту транзакцию или всю цепочку будущих повторений?";
-"Delete Only This" = "Удалить только эту";
-"Delete All Future" = "Удалить все будущие";

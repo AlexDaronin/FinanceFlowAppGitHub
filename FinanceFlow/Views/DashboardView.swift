@@ -36,7 +36,7 @@ struct DashboardView: View {
     
     private var totalIncludedBalance: Double {
         accountManager.accounts
-            .filter { $0.includedInTotal }
+            .filter { $0.includedInTotal && $0.accountType != .credit }
             .map(\.balance)
             .reduce(0, +)
     }
@@ -121,15 +121,15 @@ struct DashboardView: View {
         NavigationStack {
             ZStack {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
                             // Top anchor for scroll reset
                             Color.clear
                                 .frame(height: 0)
                                 .id("top")
                             
-                            summaryCard
-                            quickStatsSection
+                        summaryCard
+                        quickStatsSection
                         
                         // Accounts and Savings grouped together with reduced spacing
                         VStack(alignment: .leading, spacing: 12) {
@@ -150,9 +150,9 @@ struct DashboardView: View {
                         SpendingProjectionChart(transactions: transactionManager.transactions)
                             .environmentObject(settings)
                     }
-                        .padding(.horizontal)
-                        .padding(.top)
-                        .padding(.bottom, 120)
+                    .padding(.horizontal)
+                    .padding(.top)
+                    .padding(.bottom, 120)
                     }
                     .onAppear {
                         // Reset scroll position when view appears
@@ -296,7 +296,9 @@ struct DashboardView: View {
             // Credits (tappable)
             NavigationLink(destination: CreditsView()
                 .environmentObject(settings)
-                .environmentObject(creditManager)) {
+                .environmentObject(creditManager)
+                .environmentObject(accountManager)
+                .environmentObject(transactionManager)) {
                 financialOverviewRow(
                     title: String(localized: "Credits", comment: "Credits section title"),
                     amount: creditManager.totalRemaining,
@@ -332,7 +334,7 @@ struct DashboardView: View {
             
             VStack(spacing: 6) {
                 // Show savings accounts
-                let savingsAccounts = accountManager.accounts.filter { $0.isSavings }
+                let savingsAccounts = accountManager.accounts.filter { $0.isSavings && $0.accountType != .credit }
                 let pinnedSavings = savingsAccounts.filter { $0.isPinned }
                 let nonPinnedSavings = savingsAccounts.filter { !$0.isPinned }
                 
@@ -343,7 +345,7 @@ struct DashboardView: View {
                         .padding(.vertical, 8)
                 } else {
                     // Show pinned savings accounts
-                            ForEach(pinnedSavings) { account in
+                    ForEach(pinnedSavings) { account in
                         NavigationLink(destination: AccountDetailsView(account: account)
                             .environmentObject(settings)
                             .environmentObject(transactionManager)
@@ -473,7 +475,7 @@ struct DashboardView: View {
             
             VStack(spacing: 6) {
                 // Filter out savings accounts - only show regular accounts
-                let regularAccounts = accountManager.accounts.filter { !$0.isSavings }
+                let regularAccounts = accountManager.accounts.filter { !$0.isSavings && $0.accountType != .credit }
                 let pinnedAccounts = regularAccounts.filter { $0.isPinned }
                 let nonPinnedAccounts = regularAccounts.filter { !$0.isPinned }
                 
@@ -578,33 +580,33 @@ struct DashboardView: View {
                     editingAccount = nil
                 }
             )
-        }
-    }
+                }
+            }
     
     
     // Standardized Floating Action Button
     private var floatingActionButton: some View {
         VStack {
-            Spacer()
-            HStack {
                 Spacer()
+                HStack {
+                    Spacer()
                 
                 // --- BUTTON ---
-                Button {
+                                Button {
                     startAddingTransaction(for: .expense)
-                } label: {
+                                } label: {
                     Image(systemName: "plus")
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
+                                            .foregroundStyle(.white)
                         .frame(width: 56, height: 56) // Fixed standard size
-                        .background(
+                                            .background(
                             Circle()
                                 .fill(Color.accentColor) // <--- Change this per view
                                 .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 6)
                         )
                 }
                 // ----------------
-            }
+                    }
             .padding(.trailing, 20) // Fixed right margin
             .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
         }
@@ -704,6 +706,12 @@ struct DashboardView: View {
             }
             // Debt transactions don't affect account balance
         }
+    }
+    
+    private func shortDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: date)
     }
     
     private func deleteAccount(_ accountId: UUID) {

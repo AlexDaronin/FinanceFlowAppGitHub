@@ -321,24 +321,24 @@ struct SpendingProjectionChart: View {
     }
     
     private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text("Spending Projection")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    if isOverBudget {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("Spending Projection")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        if isOverBudget {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                     }
+                    Text(formatPeriodDescription())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text(formatPeriodDescription())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Spacer()
             }
-            Spacer()
-        }
     }
     
     private var sortedChartData: [ChartDataPoint] {
@@ -360,98 +360,98 @@ struct SpendingProjectionChart: View {
         return Chart {
             // Previous month comparison line (gray/green, low opacity)
             ForEach(previousData) { point in
-                LineMark(
-                    x: .value("Date", point.date, unit: .day),
-                    y: .value("Previous Month", point.previousMonth ?? 0)
-                )
-                .foregroundStyle(Color.green.opacity(0.3))
-                .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 2))
-            }
-            
+                    LineMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Previous Month", point.previousMonth ?? 0)
+                    )
+                    .foregroundStyle(Color.green.opacity(0.3))
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                
             // Actual spending line (solid, primary color)
-            ForEach(actualData) { point in
-                LineMark(
-                    x: .value("Date", point.date, unit: .day),
-                    y: .value("Actual", point.actual)
-                )
+                ForEach(actualData) { point in
+                    LineMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Actual", point.actual)
+                    )
                 .foregroundStyle(Color.primary)
-                .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 2.5))
-            }
-            
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
+                
             // Projected spending line (dashed, secondary color with opacity)
             // FIX 3: Clean LineMarks only, no AreaMark
-            ForEach(projectedData) { point in
-                LineMark(
-                    x: .value("Date", point.date, unit: .day),
-                    y: .value("Projected", point.projected ?? 0)
-                )
+                ForEach(projectedData) { point in
+                    LineMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Projected", point.projected ?? 0)
+                    )
                 .foregroundStyle(Color.secondary.opacity(0.8))
-                .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 2.5, dash: [5, 5]))
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, dash: [5, 5]))
+                }
             }
-        }
-        .frame(height: 200)
-        .chartXAxis {
-            let calendar = Calendar.current
-            let endDate = calendar.date(byAdding: .day, value: -1, to: period.end) ?? period.end
+            .frame(height: 200)
+            .chartXAxis {
+                let calendar = Calendar.current
+                let endDate = calendar.date(byAdding: .day, value: -1, to: period.end) ?? period.end
             let dayCount = calendar.dateComponents([.day], from: period.start, to: period.end).day ?? 30
             let strideCount = max(1, dayCount / 4)
-            
+                
             AxisMarks(values: .stride(by: .day, count: strideCount)) { value in
-                AxisGridLine()
-                    .foregroundStyle(.secondary.opacity(0.15))
-                if let date = value.as(Date.self) {
-                    let isStart = calendar.isDate(date, inSameDayAs: period.start)
-                    let isToday = calendar.isDate(date, inSameDayAs: today)
-                    let isEnd = calendar.isDate(date, inSameDayAs: endDate)
-                    
-                    if isStart || isToday || isEnd {
-                        AxisValueLabel {
-                            VStack(spacing: 2) {
-                                if isStart {
-                                    Text("Start")
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                } else if isToday {
-                                    Text("Today")
-                                        .font(.caption2.weight(.semibold))
+                    AxisGridLine()
+                        .foregroundStyle(.secondary.opacity(0.15))
+                    if let date = value.as(Date.self) {
+                        let isStart = calendar.isDate(date, inSameDayAs: period.start)
+                        let isToday = calendar.isDate(date, inSameDayAs: today)
+                        let isEnd = calendar.isDate(date, inSameDayAs: endDate)
+                        
+                        if isStart || isToday || isEnd {
+                            AxisValueLabel {
+                                VStack(spacing: 2) {
+                                    if isStart {
+                                        Text("Start")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    } else if isToday {
+                                        Text("Today")
+                                            .font(.caption2.weight(.semibold))
                                         .foregroundStyle(Color.accentColor)
-                                } else if isEnd {
-                                    Text("End")
-                                        .font(.caption2.weight(.semibold))
+                                    } else if isEnd {
+                                        Text("End")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text(formatChartDate(date))
+                                        .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
+                            }
+                        } else {
+                            AxisValueLabel {
                                 Text(formatChartDate(date))
                                     .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.secondary.opacity(0.5))
                             }
                         }
-                    } else {
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine()
+                        .foregroundStyle(.secondary.opacity(0.15))
+                    if let amount = value.as(Double.self), amount > 0 {
                         AxisValueLabel {
-                            Text(formatChartDate(date))
+                            Text(formatChartAmount(amount))
                                 .font(.caption2)
-                                .foregroundStyle(.secondary.opacity(0.5))
+                                .foregroundStyle(.secondary.opacity(0.7))
                         }
                     }
                 }
             }
-        }
-        .chartYAxis {
-            AxisMarks { value in
-                AxisGridLine()
-                    .foregroundStyle(.secondary.opacity(0.15))
-                if let amount = value.as(Double.self), amount > 0 {
-                    AxisValueLabel {
-                        Text(formatChartAmount(amount))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary.opacity(0.7))
-                    }
-                }
-            }
-        }
-        .chartYScale(domain: .automatic(includesZero: true))
+            .chartYScale(domain: .automatic(includesZero: true))
     }
     
     private func formatPeriodDescription() -> String {

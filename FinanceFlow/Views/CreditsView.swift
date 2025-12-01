@@ -9,187 +9,201 @@ import SwiftUI
 
 struct CreditsView: View {
     @EnvironmentObject var settings: AppSettings
-    @EnvironmentObject var manager: CreditManager
-    @EnvironmentObject var subscriptionManager: SubscriptionManager
+    @EnvironmentObject var creditManager: CreditManager
+    @EnvironmentObject var accountManager: AccountManager
+    @EnvironmentObject var transactionManager: TransactionManager
+    
     @State private var showAddSheet = false
-    @State private var selectedCredit: Credit?
+    @State private var editingCredit: Credit?
+    @State private var showingPaymentSheet = false
+    @State private var creditForPayment: Credit?
     @State private var creditToDelete: Credit?
-    @State private var showDeleteConfirmation = false
+    @State private var showDeleteAlert = false
+    
+    private var totalRemaining: Double {
+        creditManager.totalRemaining
+    }
     
     var body: some View {
         ZStack {
-            // Bottom Layer: Background
             Color.customBackground.ignoresSafeArea()
             
-            // Middle Layer: Scrollable Content
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 20) {
-                        // Top anchor for scroll reset
-                        Color.clear
-                            .frame(height: 0)
-                            .id("top")
-                        
-                        // Total Remaining Debt Summary Card (Red accent)
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Total Remaining Debt Summary
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Total Remaining Debt", comment: "Total remaining debt label")
+                        Text("Total Remaining Debt")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                        Text(currencyString(manager.totalRemaining, code: settings.currency))
-                            .font(.system(size: 34, weight: .bold))
+                        Text(currencyString(totalRemaining, code: settings.currency))
+                            .font(.system(size: 32, weight: .bold))
                             .foregroundStyle(.red)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(20)
                     .background(Color.customCardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .padding(.horizontal)
                     .padding(.top, 8)
                     
                     // Credits List
-                    if manager.credits.isEmpty {
+                    if creditManager.credits.isEmpty {
                         VStack(spacing: 16) {
                             Image(systemName: "creditcard")
-                                .font(.system(size: 40))
+                                .font(.system(size: 50))
                                 .foregroundStyle(.secondary.opacity(0.5))
-                            Text("No credits or loans", comment: "No credits empty state")
+                            Text("No credits or loans")
                                 .font(.body)
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
+                        .padding(.top, 60)
                     } else {
-                        ForEach(manager.credits) { credit in
-                            Button {
-                                selectedCredit = credit
-                            } label: {
-                                CreditCard(credit: credit)
+                        LazyVStack(spacing: 16) {
+                            ForEach(creditManager.credits) { credit in
+                                CreditCard(
+                                    credit: credit,
+                                    onPay: {
+                                        creditForPayment = credit
+                                        showingPaymentSheet = true
+                                    },
+                                    onEdit: {
+                                        editingCredit = credit
+                                        showAddSheet = true
+                                    },
+                                    onDelete: {
+                                        creditToDelete = credit
+                                        showDeleteAlert = true
+                                    }
+                                )
                             }
-                            .buttonStyle(.plain)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    creditToDelete = credit
-                                    showDeleteConfirmation = true
-                                } label: {
-                                    Label(String(localized: "Delete", comment: "Delete action"), systemImage: "trash")
-                                }
-                            }
-                            .padding(.horizontal)
                         }
-                        }
+                        .padding(.horizontal)
                     }
-                    .padding(.bottom, 100) // Space for FAB button
                 }
-                .onAppear {
-                    // Reset scroll position when view appears
-                    proxy.scrollTo("top", anchor: .top)
-                }
+                .padding(.bottom, 100)
             }
             
-            // Standardized Floating Action Button
+            // Floating Action Button
             VStack {
                 Spacer()
                 HStack {
                     Spacer()
-                    
-                    // --- BUTTON ---
                     Button {
+                        editingCredit = nil
                         showAddSheet = true
                     } label: {
                         Image(systemName: "plus")
                             .font(.title2.weight(.bold))
                             .foregroundStyle(.white)
-                            .frame(width: 56, height: 56) // Fixed standard size
+                            .frame(width: 56, height: 56)
                             .background(
                                 Circle()
-                                    .fill(Color.red) // <--- Change this per view
-                                    .shadow(color: Color.red.opacity(0.3), radius: 8, x: 0, y: 6)
+                                    .fill(Color.orange)
+                                    .shadow(color: Color.orange.opacity(0.3), radius: 8, x: 0, y: 6)
                             )
                     }
-                    // ----------------
                 }
-                .padding(.trailing, 20) // Fixed right margin
-                .padding(.bottom, 110)   // Fixed bottom margin (optimized for thumb reach)
+                .padding(.trailing, 20)
+                .padding(.bottom, 110)
             }
-            .ignoresSafeArea() // CRITICAL: Pins button relative to screen edge, ignoring layout differences
+            .ignoresSafeArea()
         }
-        .navigationTitle(Text("Credits & Loans", comment: "Credits view title"))
+        .navigationTitle("Credits & Loans")
+        .navigationBarTitleDisplayMode(.large)
         .sheet(isPresented: $showAddSheet) {
             AddCreditFormView(
-                onSave: { newCredit in
-                    manager.addCredit(newCredit)
-                    showAddSheet = false
-                },
-                onCancel: {
-                    showAddSheet = false
-                }
-            )
-            .environmentObject(settings)
-        }
-        .sheet(item: $selectedCredit) { credit in
-            AddCreditFormView(
-                existingCredit: credit,
-                onSave: { updatedCredit in
-                    manager.updateCredit(updatedCredit)
-                    selectedCredit = nil
-                },
-                onCancel: {
-                    selectedCredit = nil
-                },
-                onDelete: { creditToDelete in
-                    manager.deleteCredit(creditToDelete)
-                    // Also delete associated PlannedPayment if it exists
-                    if let associatedPayment = subscriptionManager.subscriptions.first(where: { 
-                        $0.type == .loan && $0.title == creditToDelete.title 
-                    }) {
-                        subscriptionManager.deleteSubscription(associatedPayment)
+                existingCredit: editingCredit,
+                onSave: { credit in
+                    if editingCredit != nil {
+                        creditManager.updateCredit(credit)
+                    } else {
+                        creditManager.addCredit(credit)
                     }
-                    selectedCredit = nil
-                }
+                    showAddSheet = false
+                    editingCredit = nil
+                },
+                onCancel: {
+                    showAddSheet = false
+                    editingCredit = nil
+                },
+                onDelete: editingCredit != nil ? { credit in
+                    creditManager.deleteCredit(credit, accountManager: accountManager)
+                    showAddSheet = false
+                    editingCredit = nil
+                } : nil
             )
             .environmentObject(settings)
+            .environmentObject(accountManager)
+            .environmentObject(creditManager)
         }
-        .alert("Delete Credit", isPresented: $showDeleteConfirmation, presenting: creditToDelete) { credit in
+        .sheet(isPresented: $showingPaymentSheet) {
+            if let credit = creditForPayment {
+                CreditPaymentSheet(
+                    credit: credit,
+                    onPayment: { amount, date, account in
+                        // Handle payment logic
+                        if let account = account {
+                            creditManager.updateCreditBalance(
+                                creditId: credit.id,
+                                paymentAmount: amount,
+                                accountManager: accountManager
+                            )
+                            
+                            // Create transaction
+                            let transaction = Transaction(
+                                title: "Payment: \(credit.title)",
+                                category: "Debt",
+                                amount: amount,
+                                date: date,
+                                type: .expense,
+                                accountName: account.name,
+                                currency: settings.currency
+                            )
+                            transactionManager.addTransaction(transaction)
+                        }
+                        showingPaymentSheet = false
+                        creditForPayment = nil
+                    },
+                    onCancel: {
+                        showingPaymentSheet = false
+                        creditForPayment = nil
+                    }
+                )
+                .environmentObject(settings)
+                .environmentObject(accountManager)
+            }
+        }
+        .alert("Delete Loan", isPresented: $showDeleteAlert) {
             Button("Cancel", role: .cancel) {
                 creditToDelete = nil
             }
             Button("Delete", role: .destructive) {
                 if let credit = creditToDelete {
-                    manager.deleteCredit(credit)
+                    creditManager.deleteCredit(credit, accountManager: accountManager)
                     creditToDelete = nil
                 }
             }
-        } message: { credit in
-            Text("Are you sure you want to delete \"\(credit.title)\"? This action cannot be undone.")
+        } message: {
+            if let credit = creditToDelete {
+                Text("Are you sure you want to delete \"\(credit.title)\"? This action cannot be undone.")
+            }
         }
     }
 }
 
-// MARK: - CreditCard (The "Pro" Look)
-
 struct CreditCard: View {
     @EnvironmentObject var settings: AppSettings
     let credit: Credit
-    
-    private var iconName: String {
-        let title = credit.title.lowercased()
-        if title.contains("car") || title.contains("auto") || title.contains("vehicle") {
-            return "car.fill"
-        } else if title.contains("home") || title.contains("house") || title.contains("mortgage") {
-            return "house.fill"
-        } else if title.contains("bank") || title.contains("personal") {
-            return "banknote.fill"
-        } else {
-            return "creditcard.fill"
-        }
-    }
+    let onPay: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
     
     private var progressColor: Color {
         let progress = credit.progress
-        if progress < 25 {
+        if progress < 30 {
             return .orange
-        } else if progress < 75 {
+        } else if progress < 70 {
             return .blue
         } else {
             return .green
@@ -198,70 +212,60 @@ struct CreditCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Top Row: Icon + Title + Next Payment Date
+            // Top Row: Icon + Title + Next Payment
             HStack(spacing: 12) {
                 // Icon
                 ZStack {
                     Circle()
                         .fill(progressColor.opacity(0.15))
                         .frame(width: 44, height: 44)
-                    Image(systemName: iconName)
-                        .font(.headline)
+                    Image(systemName: "creditcard.fill")
+                        .font(.title3)
                         .foregroundStyle(progressColor)
                 }
                 
-                // Title
-                Text(credit.title)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(credit.title)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    
+                    Text("Next payment: \(credit.dueDate.formatted(.dateTime.day().month(.abbreviated)))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 
                 Spacer()
-                
-                // Next Payment Date (Gray caption)
-                Text("\(String(localized: "Next payment:", comment: "Next payment prefix")) \(shortDate(credit.dueDate))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             
-            // Middle: Thick Rounded Linear Progress Bar with % Paid
+            // Middle: Progress Bar
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("\(String(format: "%.1f", credit.percentPaid))% \(String(localized: "Paid", comment: "Paid percentage"))")
+                    Text("\(Int(credit.percentPaid))% Paid")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.secondary)
                     Spacer()
                 }
                 
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
-                        // Background (gray)
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        // Background
+                        RoundedRectangle(cornerRadius: 8)
                             .fill(Color.gray.opacity(0.2))
-                            .frame(height: 16)
+                            .frame(height: 12)
                         
-                        // Foreground (colored)
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [progressColor, progressColor.opacity(0.8)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(
-                                width: max(0, min(geometry.size.width * (credit.progress / 100), geometry.size.width)),
-                                height: 16
-                            )
+                        // Progress
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(progressColor)
+                            .frame(width: geometry.size.width * (credit.progress / 100), height: 12)
                     }
                 }
-                .frame(height: 16)
+                .frame(height: 12)
             }
             
             // Bottom Row: Left vs Total
             HStack {
-                // Left (Bold)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Left", comment: "Left amount label")
+                    Text("Left")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(currencyString(credit.remaining, code: settings.currency))
@@ -271,14 +275,51 @@ struct CreditCard: View {
                 
                 Spacer()
                 
-                // Total (Gray)
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("Total", comment: "Total amount label")
+                    Text("Total")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(currencyString(credit.totalAmount, code: settings.currency))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+            }
+            
+            // Action Buttons
+            HStack(spacing: 12) {
+                Button {
+                    onPay()
+                } label: {
+                    Text("Pay")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.blue)
+                        .clipShape(Capsule())
+                }
+                
+                Button {
+                    onEdit()
+                } label: {
+                    Text("Edit")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(Capsule())
+                }
+                
+                Button {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.red)
+                        .clipShape(Capsule())
                 }
             }
         }
@@ -289,7 +330,13 @@ struct CreditCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
 }
 
