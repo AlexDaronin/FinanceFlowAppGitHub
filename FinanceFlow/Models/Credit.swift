@@ -18,7 +18,7 @@ struct Credit: Identifiable, Codable {
     let monthlyPayment: Double
     let interestRate: Double?
     let startDate: Date?
-    let accountName: String?
+    let paymentAccountId: UUID? // Changed from accountName to paymentAccountId (account used for payments)
     let termMonths: Int? // Total loan term in months (optional)
     var linkedAccountId: UUID? // Link to the Account created for this credit
     
@@ -33,7 +33,7 @@ struct Credit: Identifiable, Codable {
         monthlyPayment: Double,
         interestRate: Double? = nil,
         startDate: Date? = nil,
-        accountName: String? = nil,
+        paymentAccountId: UUID? = nil,
         termMonths: Int? = nil,
         linkedAccountId: UUID? = nil
     ) {
@@ -47,7 +47,7 @@ struct Credit: Identifiable, Codable {
         self.monthlyPayment = monthlyPayment
         self.interestRate = interestRate
         self.startDate = startDate
-        self.accountName = accountName
+        self.paymentAccountId = paymentAccountId
         self.termMonths = termMonths
         self.linkedAccountId = linkedAccountId
     }
@@ -103,5 +103,15 @@ struct CreditSummary {
         remaining: 203_500,
         nextDue: Calendar.current.date(byAdding: .day, value: 12, to: Date()) ?? Date()
     )
+}
+
+// MARK: - Helper Extensions for Account Resolution
+
+extension Credit {
+    /// Get payment account name from AccountManager
+    func paymentAccountName(accountManager: AccountManager) -> String? {
+        guard let paymentAccountId = paymentAccountId else { return nil }
+        return accountManager.getAccount(id: paymentAccountId)?.name
+    }
 }
 

@@ -2,37 +2,64 @@
 //  SubscriptionManager.swift
 //  FinanceFlow
 //
-//  Created by Aleksey Daronin on 17/11/2025.
+//  Created by Aleksey Daronin on 03/12/2025.
 //
 
 import Foundation
 import SwiftUI
 import Combine
-
-// Repetition frequency enum for subscription generation
-enum RepetitionFrequency: String {
-    case day = "Day"
-    case week = "Week"
-    case month = "Month"
-    case year = "Year"
-}
+import SwiftData
 
 class SubscriptionManager: ObservableObject {
     @Published var subscriptions: [PlannedPayment] = []
-    @Published var upcomingTransactions: [Transaction] = [] // Single source of truth for generated subscription transactions
     
     private let subscriptionsKey = "savedSubscriptions"
+    private let transactionManager: TransactionManagerAdapter // Still needed for creating transactions via adapter
+    private let transactionRepository: TransactionRepositoryProtocol
+    private let deleteTransactionChainUseCase: DeleteTransactionChainUseCase
+    private let deleteTransactionUseCase: DeleteTransactionUseCase
+    private var modelContext: ModelContext?
     
-    init() {
+    init(
+        transactionManager: TransactionManagerAdapter,
+        transactionRepository: TransactionRepositoryProtocol? = nil,
+        deleteTransactionChainUseCase: DeleteTransactionChainUseCase? = nil,
+        deleteTransactionUseCase: DeleteTransactionUseCase? = nil,
+        modelContext: ModelContext? = nil
+    ) {
+        self.transactionManager = transactionManager
+        // Use provided repository or fallback to Dependencies.shared (for backward compatibility)
+        self.transactionRepository = transactionRepository ?? Dependencies.shared.transactionRepository
+        // Create UseCases if not provided
+        if let chainUseCase = deleteTransactionChainUseCase {
+            self.deleteTransactionChainUseCase = chainUseCase
+        } else {
+            self.deleteTransactionChainUseCase = DeleteTransactionChainUseCase(
+                transactionRepository: self.transactionRepository,
+                accountRepository: Dependencies.shared.accountRepository
+            )
+        }
+        if let deleteUseCase = deleteTransactionUseCase {
+            self.deleteTransactionUseCase = deleteUseCase
+        } else {
+            self.deleteTransactionUseCase = DeleteTransactionUseCase(
+                transactionRepository: self.transactionRepository,
+                accountRepository: Dependencies.shared.accountRepository
+            )
+        }
+        self.modelContext = modelContext
         loadData()
-        generateUpcomingTransactions()
+        Task {
+            await generateUpcomingTransactions()
+        }
     }
     
-    /// Clean up old subscription transactions from TransactionManager
-    /// This should be called after TransactionManager is initialized
-    func cleanupOldTransactions(in transactionManager: TransactionManager) {
-        // Note: cleanupAllSubscriptionTransactions was removed from TransactionManager
-        // This function is kept for compatibility but does nothing
+    func setModelContext(_ context: ModelContext) {
+        self.modelContext = context
+        loadData()
+        Task {
+            await generateUpcomingTransactions()
+        }
     }
     
     // MARK: - Subscription Management
@@ -40,10 +67,8 @@ class SubscriptionManager: ObservableObject {
     func addSubscription(_ subscription: PlannedPayment) {
         subscriptions.append(subscription)
         saveData()
-        generateUpcomingTransactions() // Regenerate after adding
-        // Force UI refresh in both Planned and Future tabs
-        DispatchQueue.main.async { [weak self] in
-            self?.objectWillChange.send()
+        Task {
+            await generateUpcomingTransactions()
         }
     }
     
@@ -51,10 +76,10 @@ class SubscriptionManager: ObservableObject {
         if let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) {
             subscriptions[index] = subscription
             saveData()
-            generateUpcomingTransactions() // Regenerate after updating
-            // Force UI refresh in both Planned and Future tabs
-            DispatchQueue.main.async { [weak self] in
-                self?.objectWillChange.send()
+            // Remove old generated transactions and regenerate
+            removeGeneratedTransactions(for: subscription.id)
+            Task {
+                await generateUpcomingTransactions()
             }
         }
     }
@@ -62,1067 +87,555 @@ class SubscriptionManager: ObservableObject {
     func deleteSubscription(_ subscription: PlannedPayment) {
         subscriptions.removeAll { $0.id == subscription.id }
         saveData()
-        generateUpcomingTransactions() // Regenerate after deleting
-        // Force UI refresh in both Planned and Future tabs
-        DispatchQueue.main.async { [weak self] in
-            self?.objectWillChange.send()
-        }
+        removeGeneratedTransactions(for: subscription.id)
     }
     
     func getSubscription(id: UUID) -> PlannedPayment? {
         subscriptions.first { $0.id == id }
     }
     
-    // MARK: - Calculations
+    // MARK: - Transaction Generation
     
-    /// Calculates total monthly burn (expenses) for the current financial period
-    func totalMonthlyBurn(startDay: Int) -> Double {
-        let period = DateRangeHelper.currentPeriod(for: startDay)
+    /// Generate upcoming transactions from all subscriptions
+    /// Always maintains exactly 12 months of future transactions
+    /// IDEMPOTENT: Can be called multiple times without creating duplicates
+    private func generateUpcomingTransactions() async {
         let calendar = Calendar.current
-        let periodStart = calendar.startOfDay(for: period.start)
-        let periodEnd = calendar.startOfDay(for: period.end)
-        
-        var total: Double = 0
+        let today = calendar.startOfDay(for: Date())
         
         for subscription in subscriptions {
-            // 1. Basic checks (Status, Type)
-            guard subscription.status == .upcoming,
-                  !subscription.isIncome else {
+            guard subscription.isRepeating,
+                  let frequency = subscription.repetitionFrequency,
+                  let interval = subscription.repetitionInterval else {
+                // For non-repeating subscriptions, create a single transaction
+                // BUG FIX 1: Use startDate if available (for credits), otherwise use subscription.date
+                let baseDate = subscription.startDate ?? subscription.date
+                let baseDateStart = calendar.startOfDay(for: baseDate)
+                // Remove past transactions for non-repeating subscriptions
+                await removePastTransactions(for: subscription.id, before: today)
+                // Only create transaction if date is today or in the future (for SubscriptionsView to show it)
+                if baseDateStart >= today {
+                    await createTransactionIfNeeded(from: subscription, date: baseDate)
+                }
                 continue
             }
             
-            // 2. Check Termination (Delete All Future)
-            // If subscription has been terminated before the period, skip it
-            if let endDate = subscription.endDate {
-                let endDateStart = calendar.startOfDay(for: endDate)
-                if endDateStart < periodStart {
-                    continue // Subscription ended before this period
-                }
+            // Remove only past transactions (keep future ones to avoid regeneration issues)
+            await removePastTransactions(for: subscription.id, before: today)
+            
+            // Calculate target date: 12 months from today
+            let targetDate = calendar.date(byAdding: .month, value: 12, to: today) ?? today
+            
+            // Get existing future transactions up to target date from Repository (Single Source of Truth)
+            let existingFutureTransactions: [TransactionEntity]
+            do {
+                existingFutureTransactions = try await getFutureTransactions(for: subscription.id, from: today)
+                    .filter { calendar.startOfDay(for: $0.date) <= targetDate }
+            } catch {
+                print("Error fetching future transactions: \(error)")
+                existingFutureTransactions = []
             }
             
-            // 3. For repeating subscriptions, calculate occurrences in the period
-            if subscription.isRepeating {
-                guard let frequencyString = subscription.repetitionFrequency,
-                      let frequency = RepetitionFrequency(rawValue: frequencyString),
-                      let interval = subscription.repetitionInterval else {
-                    continue
-                }
-                
-                let startDate = subscription.date
-                let weekdays = subscription.selectedWeekdays.map { Set($0) } ?? []
-                let skippedDates = subscription.skippedDates ?? []
-                let subscriptionEndDate = subscription.endDate
-                
-                // Determine actual end date for generation
-                // Use subscription's endDate if set, otherwise generate up to period end
-                // But we need to generate at least up to period end to catch all occurrences in the period
-                let generateEndDate = subscriptionEndDate ?? periodEnd
-                let actualEndDateStart = subscriptionEndDate != nil ? calendar.startOfDay(for: subscriptionEndDate!) : periodEnd
-                
-                // Count occurrences that fall within the period
-                var currentDate = startDate
-                let originalDay = calendar.component(.day, from: startDate)
-                var iterationCount = 0
-                let maxIterations = 1000
-                
-                // Check if start date is in period and not skipped
-                let startDateStart = calendar.startOfDay(for: startDate)
-                if startDateStart >= periodStart && startDateStart < periodEnd {
-                    let isStartDateSkipped = skippedDates.contains { skippedDate in
-                        calendar.isDate(startDateStart, inSameDayAs: skippedDate)
-                    }
-                    if !isStartDateSkipped && startDateStart <= actualEndDateStart {
-                        total += subscription.amount
-                    }
-                }
-                
-                // Generate subsequent occurrences
-                currentDate = calculateNextDate(
-                    from: startDate,
-                    frequency: frequency,
-                    interval: interval,
-                    weekdays: weekdays,
-                    originalDay: originalDay
-                )
-                
-                // Count occurrences in the period
-                while currentDate <= generateEndDate && iterationCount < maxIterations {
-                    iterationCount += 1
-                    
-                    let currentDateStart = calendar.startOfDay(for: currentDate)
-                    
-                    // Check if this date is in the period
-                    if currentDateStart >= periodStart && currentDateStart < periodEnd {
-                        // Check if this date is skipped
-                        let isSkipped = skippedDates.contains { skippedDate in
-                            calendar.isDate(currentDateStart, inSameDayAs: skippedDate)
-                        }
-                        
-                        if !isSkipped {
-                            total += subscription.amount
-                        }
-                    }
-                    
-                    // Calculate next date
-                    let nextDate = calculateNextDate(
-                        from: currentDate,
-                        frequency: frequency,
-                        interval: interval,
-                        weekdays: weekdays,
-                        originalDay: originalDay
-                    )
-                    
-                    if nextDate <= currentDate || nextDate > generateEndDate {
-                        break
-                    }
-                    
-                    currentDate = nextDate
-                }
+            // Find the latest future transaction within the 12-month window
+            let latestFutureDate = existingFutureTransactions
+                .map { calendar.startOfDay(for: $0.date) }
+                .max()
+            
+            // Determine starting date for generation
+            var startDate: Date
+            if let latestDate = latestFutureDate, latestDate >= today && latestDate < targetDate {
+                // Start from the day after the latest existing transaction within 12 months
+                startDate = calendar.date(byAdding: .day, value: 1, to: latestDate) ?? latestDate
             } else {
-                // Non-repeating subscription - only count if date is in period
-                let subscriptionDateStart = calendar.startOfDay(for: subscription.date)
-                if subscriptionDateStart >= periodStart && subscriptionDateStart < periodEnd {
-                    // Check if skipped
-                    let isSkipped = subscription.skippedDates?.contains { skippedDate in
-                        calendar.isDate(subscriptionDateStart, inSameDayAs: skippedDate)
-                    } ?? false
-                    
-                    if !isSkipped {
-                        total += subscription.amount
-                    }
-                }
-            }
-        }
-        
-        return total
-    }
-    
-    /// Calculates total monthly income for the current financial period
-    func totalMonthlyIncome(startDay: Int) -> Double {
-        let period = DateRangeHelper.currentPeriod(for: startDay)
-        let calendar = Calendar.current
-        let periodStart = calendar.startOfDay(for: period.start)
-        let periodEnd = calendar.startOfDay(for: period.end)
-        
-        var total: Double = 0
-        
-        for subscription in subscriptions {
-            // 1. Basic checks (Status, Type)
-            guard subscription.status == .upcoming,
-                  subscription.isIncome else {
-                continue
+                // BUG FIX 1: Use startDate if available (for credits), otherwise use subscription.date
+                // Normalize date to day level (without time) using local timezone
+                let baseDate = subscription.startDate ?? subscription.date
+                let subscriptionDate = calendar.startOfDay(for: baseDate)
+                // For first transaction, always use the exact startDate (don't use today if startDate is in the past)
+                // This ensures the first transaction is created on the user-selected date
+                startDate = subscriptionDate
             }
             
-            // 2. Check Termination (Delete All Future)
-            // If subscription has been terminated before the period, skip it
-            if let endDate = subscription.endDate {
-                let endDateStart = calendar.startOfDay(for: endDate)
-                if endDateStart < periodStart {
-                    continue // Subscription ended before this period
-                }
-            }
+            // Generate transactions until we reach 12 months ahead
+            var currentDate = calendar.startOfDay(for: startDate)
+            var generatedCount = 0
+            let maxTransactions = 500 // Increased limit for complex intervals
+            var isFirstTransaction = true
             
-            // 3. For repeating subscriptions, calculate occurrences in the period
-            if subscription.isRepeating {
-                guard let frequencyString = subscription.repetitionFrequency,
-                      let frequency = RepetitionFrequency(rawValue: frequencyString),
-                      let interval = subscription.repetitionInterval else {
-                    continue
-                }
-                
-                let startDate = subscription.date
-                let weekdays = subscription.selectedWeekdays.map { Set($0) } ?? []
-                let skippedDates = subscription.skippedDates ?? []
-                let subscriptionEndDate = subscription.endDate
-                
-                // Determine actual end date for generation
-                // Use subscription's endDate if set, otherwise generate up to period end
-                // But we need to generate at least up to period end to catch all occurrences in the period
-                let generateEndDate = subscriptionEndDate ?? periodEnd
-                let actualEndDateStart = subscriptionEndDate != nil ? calendar.startOfDay(for: subscriptionEndDate!) : periodEnd
-                
-                // Count occurrences that fall within the period
-                var currentDate = startDate
-                let originalDay = calendar.component(.day, from: startDate)
-                var iterationCount = 0
-                let maxIterations = 1000
-                
-                // Check if start date is in period and not skipped
-                let startDateStart = calendar.startOfDay(for: startDate)
-                if startDateStart >= periodStart && startDateStart < periodEnd {
-                    let isStartDateSkipped = skippedDates.contains { skippedDate in
-                        calendar.isDate(startDateStart, inSameDayAs: skippedDate)
-                    }
-                    if !isStartDateSkipped && startDateStart <= actualEndDateStart {
-                        total += subscription.amount
-                    }
-                }
-                
-                // Generate subsequent occurrences
-                currentDate = calculateNextDate(
-                    from: startDate,
-                    frequency: frequency,
-                    interval: interval,
-                    weekdays: weekdays,
-                    originalDay: originalDay
-                )
-                
-                // Count occurrences in the period
-                while currentDate <= generateEndDate && iterationCount < maxIterations {
-                    iterationCount += 1
-                    
-                    let currentDateStart = calendar.startOfDay(for: currentDate)
-                    
-                    // Check if this date is in the period
-                    if currentDateStart >= periodStart && currentDateStart < periodEnd {
-                        // Check if this date is skipped
-                        let isSkipped = skippedDates.contains { skippedDate in
-                            calendar.isDate(currentDateStart, inSameDayAs: skippedDate)
-                        }
-                        
-                        if !isSkipped {
-                            total += subscription.amount
-                        }
-                    }
-                    
-                    // Calculate next date
-                    let nextDate = calculateNextDate(
-                        from: currentDate,
-                        frequency: frequency,
-                        interval: interval,
-                        weekdays: weekdays,
-                        originalDay: originalDay
-                    )
-                    
-                    if nextDate <= currentDate || nextDate > generateEndDate {
-                        break
-                    }
-                    
-                    currentDate = nextDate
-                }
-            } else {
-                // Non-repeating subscription - only count if date is in period
-                let subscriptionDateStart = calendar.startOfDay(for: subscription.date)
-                if subscriptionDateStart >= periodStart && subscriptionDateStart < periodEnd {
-                    // Check if skipped
-                    let isSkipped = subscription.skippedDates?.contains { skippedDate in
-                        calendar.isDate(subscriptionDateStart, inSameDayAs: skippedDate)
-                    } ?? false
-                    
-                    if !isSkipped {
-                        total += subscription.amount
-                    }
-                }
-            }
-        }
-        
-        return total
-    }
-    
-    /// Monthly burn rate for the current financial period
-    func monthlyBurnRate(startDay: Int) -> Double {
-        totalMonthlyBurn(startDay: startDay)
-    }
-    
-    /// Monthly projected income for the current financial period
-    func monthlyProjectedIncome(startDay: Int) -> Double {
-        totalMonthlyIncome(startDay: startDay)
-    }
-    
-    /// Active subscriptions count within the current financial period
-    /// CRITICAL FIX: Only count subscriptions that have actual occurrences in the period
-    func activeSubscriptionsCount(startDay: Int) -> Int {
-        let period = DateRangeHelper.currentPeriod(for: startDay)
-        let calendar = Calendar.current
-        let periodStart = calendar.startOfDay(for: period.start)
-        let periodEnd = calendar.startOfDay(for: period.end)
-        
-        var activeCount = 0
-        
-        for subscription in subscriptions {
-            // 1. Basic checks (Status)
-            guard subscription.status == .upcoming else {
-                continue
-            }
+            // BUG FIX 1: Get the base startDate (from subscription.startDate or subscription.date)
+            // This is used to identify the first transaction
+            let baseStartDate = calendar.startOfDay(for: subscription.startDate ?? subscription.date)
             
-            // 2. Check Termination (Delete All Future)
-            // If subscription has been terminated before the period, skip it
-            if let endDate = subscription.endDate {
-                let endDateStart = calendar.startOfDay(for: endDate)
-                if endDateStart < periodStart {
-                    continue // Subscription ended before this period
-                }
-            }
+            // BUG FIX 2: Extract original day of month to preserve it across months
+            // This prevents date drift (e.g., 30th -> 28th -> 28th should be 30th -> 28th -> 30th)
+            let originalDay = calendar.component(.day, from: baseStartDate)
             
-            // 3. For repeating subscriptions, check if there are any occurrences in the period
-            if subscription.isRepeating {
-                guard let frequencyString = subscription.repetitionFrequency,
-                      let frequency = RepetitionFrequency(rawValue: frequencyString),
-                      let interval = subscription.repetitionInterval else {
-                    continue
-                }
-                
-                let startDate = subscription.date
-                let weekdays = subscription.selectedWeekdays.map { Set($0) } ?? []
-                let skippedDates = subscription.skippedDates ?? []
-                let subscriptionEndDate = subscription.endDate
-                
-                // Determine actual end date for generation
-                let generateEndDate = subscriptionEndDate ?? periodEnd
-                let actualEndDateStart = subscriptionEndDate != nil ? calendar.startOfDay(for: subscriptionEndDate!) : periodEnd
-                
-                var hasOccurrenceInPeriod = false
-                var currentDate = startDate
-                let originalDay = calendar.component(.day, from: startDate)
-                var iterationCount = 0
-                let maxIterations = 1000
-                
-                // Check if start date is in period and not skipped
-                let startDateStart = calendar.startOfDay(for: startDate)
-                if startDateStart >= periodStart && startDateStart < periodEnd {
-                    let isStartDateSkipped = skippedDates.contains { skippedDate in
-                        calendar.isDate(startDateStart, inSameDayAs: skippedDate)
-                    }
-                    if !isStartDateSkipped && startDateStart <= actualEndDateStart {
-                        hasOccurrenceInPeriod = true
-                    }
-                }
-                
-                // If not found yet, check subsequent occurrences
-                if !hasOccurrenceInPeriod {
+            // Generate transactions until we have coverage up to 12 months ahead
+            while currentDate <= targetDate && generatedCount < maxTransactions {
+                // Skip if date is in skippedDates
+                if let skippedDates = subscription.skippedDates,
+                   skippedDates.contains(where: { Calendar.current.isDate(calendar.startOfDay(for: $0), inSameDayAs: currentDate) }) {
                     currentDate = calculateNextDate(
-                        from: startDate,
+                        from: currentDate,
                         frequency: frequency,
                         interval: interval,
-                        weekdays: weekdays,
+                        weekdays: subscription.selectedWeekdays,
                         originalDay: originalDay
                     )
-                    
-                    while currentDate <= generateEndDate && iterationCount < maxIterations && !hasOccurrenceInPeriod {
-                        iterationCount += 1
-                        
-                        let currentDateStart = calendar.startOfDay(for: currentDate)
-                        
-                        // Check if this date is in the period
-                        if currentDateStart >= periodStart && currentDateStart < periodEnd {
-                            // Check if this date is skipped
-                            let isSkipped = skippedDates.contains { skippedDate in
-                                calendar.isDate(currentDateStart, inSameDayAs: skippedDate)
-                            }
-                            
-                            if !isSkipped {
-                                hasOccurrenceInPeriod = true
-                                break
-                            }
-                        }
-                        
-                        // Calculate next date
-                        let nextDate = calculateNextDate(
-                            from: currentDate,
-                            frequency: frequency,
-                            interval: interval,
-                            weekdays: weekdays,
-                            originalDay: originalDay
-                        )
-                        
-                        if nextDate <= currentDate || nextDate > generateEndDate {
-                            break
-                        }
-                        
-                        currentDate = nextDate
-                    }
+                    currentDate = calendar.startOfDay(for: currentDate)
+                    isFirstTransaction = false
+                    continue
                 }
                 
-                if hasOccurrenceInPeriod {
-                    activeCount += 1
+                // Skip if date is before endDate (for "Delete All Future")
+                if let endDate = subscription.endDate, currentDate >= endDate {
+                    break
                 }
-            } else {
-                // Non-repeating subscription - only count if date is in period
-                let subscriptionDateStart = calendar.startOfDay(for: subscription.date)
-                if subscriptionDateStart >= periodStart && subscriptionDateStart < periodEnd {
-                    // Check if skipped
-                    let isSkipped = subscription.skippedDates?.contains { skippedDate in
-                        calendar.isDate(subscriptionDateStart, inSameDayAs: skippedDate)
-                    } ?? false
-                    
-                    if !isSkipped {
-                        activeCount += 1
-                    }
+                
+                // BUG FIX 1: Always create the first transaction on startDate (even if in the past)
+                // For subsequent transactions, only create if they are in the future
+                let shouldCreate = isFirstTransaction && calendar.isDate(currentDate, inSameDayAs: baseStartDate) || currentDate >= today
+                if shouldCreate {
+                    await createTransactionIfNeeded(from: subscription, date: currentDate)
                 }
+                
+                // Calculate next date - preserve originalDay to prevent date drift
+                currentDate = calculateNextDate(
+                    from: currentDate,
+                    frequency: frequency,
+                    interval: interval,
+                    weekdays: subscription.selectedWeekdays,
+                    originalDay: originalDay
+                )
+                currentDate = calendar.startOfDay(for: currentDate)
+                isFirstTransaction = false
+                
+                generatedCount += 1
             }
         }
+    }
+    
+    /// Ensure future transactions are maintained (called periodically)
+    /// This method maintains exactly 12 months of future transactions
+    func ensureFutureTransactions() {
+        Task {
+            await generateUpcomingTransactions()
+        }
+    }
+    
+    /// Get all future transactions for a subscription from Repository (Single Source of Truth)
+    private func getFutureTransactions(for subscriptionId: UUID, from date: Date) async throws -> [TransactionEntity] {
+        let calendar = Calendar.current
+        let fromDate = calendar.startOfDay(for: date)
         
-        return activeCount
+        // Fetch from Repository, not from memory array
+        let allTransactions = try await transactionRepository.fetchTransactions(sourceId: subscriptionId)
+        
+        return allTransactions.filter { transaction in
+            let transactionDate = calendar.startOfDay(for: transaction.date)
+            return transactionDate >= fromDate
+        }
     }
     
-    /// Legacy computed properties for backward compatibility (uses default startDay = 1)
-    var totalMonthlyBurn: Double {
-        totalMonthlyBurn(startDay: 1)
+    /// Remove only past transactions for a subscription (keeps future ones)
+    /// Uses DeleteTransactionUseCase to ensure balance rollbacks
+    private func removePastTransactions(for subscriptionId: UUID, before date: Date) async {
+        let calendar = Calendar.current
+        let beforeDate = calendar.startOfDay(for: date)
+        
+        // Fetch from Repository (Single Source of Truth)
+        guard let allTransactions = try? await transactionRepository.fetchTransactions(sourceId: subscriptionId) else {
+            return
+        }
+        
+        let transactionsToRemove = allTransactions.filter { transaction in
+            let transactionDate = calendar.startOfDay(for: transaction.date)
+            return transactionDate < beforeDate
+        }
+        
+        // Delete each transaction through UseCase to ensure balance rollbacks
+        for transaction in transactionsToRemove {
+            do {
+                try await deleteTransactionUseCase.execute(id: transaction.id)
+            } catch {
+                print("Error deleting past transaction \(transaction.id): \(error)")
+            }
+        }
     }
     
-    var totalMonthlyIncome: Double {
-        totalMonthlyIncome(startDay: 1)
-    }
-    
-    var monthlyBurnRate: Double {
-        totalMonthlyBurn
-    }
-    
-    var monthlyProjectedIncome: Double {
-        totalMonthlyIncome
-    }
-    
-    var activeSubscriptionsCount: Int {
-        activeSubscriptionsCount(startDay: 1)
-    }
-    
-    func subscriptions(isIncome: Bool) -> [PlannedPayment] {
-        subscriptions.filter { $0.isIncome == isIncome }
-    }
-    
-    // MARK: - Pay Early Feature
-    
-    /// Pay a subscription early by creating a real transaction and skipping the scheduled occurrence
-    /// - Parameters:
-    ///   - subscription: The subscription to pay early
-    ///   - occurrenceDate: The specific date of the occurrence to pay (and skip)
-    ///   - transactionManager: The transaction manager to add the new transaction to
-    ///   - creditManager: The credit manager to update linked credit balance
-    ///   - accountManager: The account manager to update account balances
-    ///   - currency: The currency code for the transaction
-    func payEarly(subscription: PlannedPayment, occurrenceDate: Date, transactionManager: TransactionManager, creditManager: CreditManager, accountManager: AccountManager, currency: String = "USD") {
-        // Determine transaction type: if toAccountName is present, it's a transfer
+    /// Create a transaction from subscription if it doesn't already exist
+    /// IDEMPOTENT: Checks Repository (Single Source of Truth) before creating
+    private func createTransactionIfNeeded(from subscription: PlannedPayment, date: Date) async {
+        // Check Repository (Single Source of Truth) - not memory array
+        let exists: Bool
+        do {
+            exists = try await transactionRepository.transactionExists(sourceId: subscription.id, date: date)
+        } catch {
+            print("Error checking transaction existence: \(error)")
+            return
+        }
+        
+        guard !exists else { return }
+        
+        // Get currency from UserDefaults (same way AppSettings does)
+        let currency = UserDefaults.standard.string(forKey: "mainCurrency") ?? "USD"
+        
+        // Determine transaction type: transfer if toAccountId is set, otherwise income/expense
         let transactionType: TransactionType
-        if let toAccountName = subscription.toAccountName, !toAccountName.isEmpty {
+        if subscription.toAccountId != nil {
             transactionType = .transfer
         } else {
             transactionType = subscription.isIncome ? .income : .expense
         }
         
-        // Create a new standalone transaction with today's date
-        // Do not link it to a source payment ID; treat it as a standalone transaction
-        let newTransaction = Transaction(
-            id: UUID(),
-            title: subscription.title,
-            category: subscription.category ?? "General",
+        // Determine category: "Transfer" for transfers, otherwise use subscription category or default
+        let category: String
+        if transactionType == .transfer {
+            category = "Transfer"
+        } else {
+            category = subscription.category ?? "General"
+        }
+        
+        // Create new transaction
+        let transaction = Transaction(
+            title: subscription.title.isEmpty ? (subscription.isIncome ? "Recurring Income" : "Recurring Expense") : subscription.title,
+            category: category,
             amount: subscription.amount,
-            date: Date(), // Pay now, not on the scheduled date
+            date: date,
             type: transactionType,
-            accountName: subscription.accountName,
-            toAccountName: subscription.toAccountName,
+            accountId: subscription.accountId,
+            toAccountId: subscription.toAccountId,
             currency: currency,
-            sourcePlannedPaymentId: nil, // Standalone transaction, not linked to subscription
-            occurrenceDate: nil // Standalone transaction, no occurrence date
+            sourcePlannedPaymentId: subscription.id,
+            occurrenceDate: date
         )
         
-        // Update account balances
-        // 1. Source Account: Update subscription.accountName based on transaction type
-        if let sourceAccount = accountManager.getAccount(name: subscription.accountName) {
-            var updatedSourceAccount = sourceAccount
-            if transactionType == .transfer {
-                // Transfer: subtract from source account
-                updatedSourceAccount.balance -= subscription.amount
-            } else if transactionType == .income {
-                // Income: add to source account
-                updatedSourceAccount.balance += subscription.amount
-            } else {
-                // Expense: subtract from source account
-                updatedSourceAccount.balance -= subscription.amount
-            }
-            accountManager.updateAccount(updatedSourceAccount)
-        }
-        
-        // 2. Destination Account: Add to destination if it's a transfer or has linkedCreditId
-        if transactionType == .transfer, let toAccountName = subscription.toAccountName {
-            // Transfer: add to destination account (reducing negative debt for credit accounts)
-            if let destinationAccount = accountManager.getAccount(name: toAccountName) {
-                var updatedDestinationAccount = destinationAccount
-                updatedDestinationAccount.balance += subscription.amount
-                accountManager.updateAccount(updatedDestinationAccount)
-            }
-        } else if let linkedCreditId = subscription.linkedCreditId {
-            // If linked to a credit (even if not explicitly a transfer), find the credit's linked account and add to it
-            // This handles cases where a subscription payment is linked to a credit account
-            if let credit = creditManager.credits.first(where: { $0.id == linkedCreditId }),
-               let linkedAccountId = credit.linkedAccountId,
-               let destinationAccount = accountManager.getAccount(id: linkedAccountId) {
-                var updatedDestinationAccount = destinationAccount
-                updatedDestinationAccount.balance += subscription.amount
-                accountManager.updateAccount(updatedDestinationAccount)
-            }
-        }
-        
-        // Add the transaction to TransactionManager
-        transactionManager.addTransaction(newTransaction)
-        
-        // If subscription is linked to a credit, update the credit balance
-        // Note: For transfers to credit accounts, the Account balance is already updated by TransactionManager
-        // We still need to sync the Credit model's remaining/paid values
-        if let linkedCreditId = subscription.linkedCreditId {
-            // Update credit balance without creating a duplicate transaction
-            // (transaction was already created above)
-            // For transfers, we need to sync from Account balance instead
-            if transactionType == .transfer, let toAccountName = subscription.toAccountName {
-                // Find credit by linked account name
-                if let credit = creditManager.credits.first(where: { credit in
-                    if let linkedAccountId = credit.linkedAccountId,
-                       let account = accountManager.getAccount(id: linkedAccountId),
-                       account.name == toAccountName {
-                        return true
-                    }
-                    return false
-                }) {
-                    // Sync credit from account balance (account balance was updated by TransactionManager)
-                    creditManager.syncCreditFromAccount(creditId: credit.id, accountManager: accountManager)
-                }
-            } else {
-                creditManager.updateCreditBalance(creditId: linkedCreditId, paymentAmount: subscription.amount, accountManager: accountManager)
-            }
-        } else if transactionType == .transfer, let toAccountName = subscription.toAccountName {
-            // Even if not explicitly linked, check if transfer is to a credit account
-            if let toAccount = accountManager.getAccount(name: toAccountName),
-               toAccount.accountType == .credit,
-               let credit = creditManager.credits.first(where: { $0.linkedAccountId == toAccount.id }) {
-                // Sync credit from account balance
-                creditManager.syncCreditFromAccount(creditId: credit.id, accountManager: accountManager)
-            }
-        }
-        
-        // Skip the scheduled occurrence so it disappears from the "Future" list
-        skipDate(for: subscription, date: occurrenceDate)
-        
-        // Force UI refresh
-        DispatchQueue.main.async { [weak self] in
-            self?.objectWillChange.send()
-        }
+        transactionManager.addTransaction(transaction)
     }
     
-    // Skip a specific date for a repeating payment
-    func skipDate(for payment: PlannedPayment, date: Date) {
-        guard let index = subscriptions.firstIndex(where: { $0.id == payment.id }) else {
-            return
-        }
-        
-        let calendar = Calendar.current
-        let dateToSkip = calendar.startOfDay(for: date)
-        
-        var existingSkippedDates = payment.skippedDates ?? []
-        
-        // Check if date is already skipped
-        if !existingSkippedDates.contains(where: { calendar.isDate($0, inSameDayAs: dateToSkip) }) {
-            existingSkippedDates.append(dateToSkip)
-            
-            // Update the payment with new skipped dates
-            let updatedPayment = PlannedPayment(
-                id: payment.id,
-                title: payment.title,
-                amount: payment.amount,
-                date: payment.date,
-                status: payment.status,
-                accountName: payment.accountName,
-                toAccountName: payment.toAccountName,
-                category: payment.category,
-                type: payment.type,
-                isIncome: payment.isIncome,
-                totalLoanAmount: payment.totalLoanAmount,
-                remainingBalance: payment.remainingBalance,
-                startDate: payment.startDate,
-                interestRate: payment.interestRate,
-                linkedCreditId: payment.linkedCreditId,
-                isRepeating: payment.isRepeating,
-                repetitionFrequency: payment.repetitionFrequency,
-                repetitionInterval: payment.repetitionInterval,
-                selectedWeekdays: payment.selectedWeekdays,
-                skippedDates: existingSkippedDates,
-                endDate: payment.endDate
-            )
-            
-            subscriptions[index] = updatedPayment
-            saveData()
-            generateUpcomingTransactions() // Regenerate after skipping
-        }
-    }
-    
-    // Set end date for a repeating payment (terminate chain from a specific date forward)
-    func setEndDate(for payment: PlannedPayment, endDate: Date) {
-        guard let index = subscriptions.firstIndex(where: { $0.id == payment.id }) else {
-            return
-        }
-        
-        let calendar = Calendar.current
-        let endDateToSet = calendar.startOfDay(for: endDate)
-        
-        // Update the payment with end date
-        let updatedPayment = PlannedPayment(
-            id: payment.id,
-            title: payment.title,
-            amount: payment.amount,
-            date: payment.date,
-            status: payment.status,
-            accountName: payment.accountName,
-            toAccountName: payment.toAccountName,
-            category: payment.category,
-            type: payment.type,
-            isIncome: payment.isIncome,
-            totalLoanAmount: payment.totalLoanAmount,
-            remainingBalance: payment.remainingBalance,
-            startDate: payment.startDate,
-            interestRate: payment.interestRate,
-            linkedCreditId: payment.linkedCreditId,
-            isRepeating: payment.isRepeating,
-            repetitionFrequency: payment.repetitionFrequency,
-            repetitionInterval: payment.repetitionInterval,
-            selectedWeekdays: payment.selectedWeekdays,
-            skippedDates: payment.skippedDates,
-            endDate: endDateToSet
-        )
-        
-        subscriptions[index] = updatedPayment
-        saveData()
-        generateUpcomingTransactions() // Regenerate after setting end date
-    }
-    
-    // MARK: - Transaction Generation (Single Source of Truth)
-    
-    /// Generate upcoming transactions for all repeating subscriptions
-    /// This is the SINGLE SOURCE OF TRUTH - no standalone transactions should be created
-    func generateUpcomingTransactions() {
-        var allTransactions: [Transaction] = []
-        let calendar = Calendar.current
-        let today = Date()
-        let endDate = calendar.date(byAdding: .year, value: 1, to: today) ?? today
-        
-        // Get all repeating subscriptions
-        let repeatingSubscriptions = subscriptions.filter { $0.isRepeating }
-        
-        for subscription in repeatingSubscriptions {
-            guard let frequencyString = subscription.repetitionFrequency,
-                  let frequency = RepetitionFrequency(rawValue: frequencyString),
-                  let interval = subscription.repetitionInterval else {
-                continue
-            }
-            
-            let startDate = subscription.date
-            let weekdays = subscription.selectedWeekdays.map { Set($0) } ?? []
-            let skippedDates = subscription.skippedDates ?? []
-            let subscriptionEndDate = subscription.endDate
-            
-            // Determine actual end date (use subscription's endDate if set)
-            let actualEndDate = subscriptionEndDate ?? endDate
-            
-            let startDateStart = calendar.startOfDay(for: startDate)
-            let todayStart = calendar.startOfDay(for: today)
-            let actualEndDateStart = calendar.startOfDay(for: actualEndDate)
-            
-            // Extract original day component from startDate for month/year frequencies
-            // This ensures we preserve the original day (e.g., 31st) across months
-            let originalDay = calendar.component(.day, from: startDate)
-            
-            // CRITICAL FIX: Track dates we've already added to prevent duplicates
-            var addedDates: Set<String> = []
-            
-            // Helper to check and add a transaction for a specific date
-            func addTransactionIfNeeded(for date: Date, isFirstOccurrence: Bool = false) {
-                let dateStart = calendar.startOfDay(for: date)
-                let dateKey = ISO8601DateFormatter().string(from: dateStart)
-                
-                // Skip if we've already added this date
-                if addedDates.contains(dateKey) {
-                    return
-                }
-                
-                // Check if this date is skipped
-                let isSkipped = skippedDates.contains { skippedDate in
-                    calendar.isDate(dateStart, inSameDayAs: skippedDate)
-                }
-                
-                if isSkipped {
-                    return
-                }
-                
-                // Check if date is within end date
-                if dateStart > actualEndDateStart {
-                    return
-                }
-                
-                // For first occurrence: include if today/future OR recent past (90 days)
-                // For subsequent occurrences: only include if today/future
-                let ninetyDaysAgo = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -90, to: today) ?? today)
-                let isTodayOrFuture = dateStart >= todayStart
-                let isRecentPast = dateStart >= ninetyDaysAgo && dateStart < todayStart
-                
-                let shouldInclude = isFirstOccurrence ? (isTodayOrFuture || isRecentPast) : isTodayOrFuture
-                
-                if shouldInclude {
-                    let transaction = Transaction(
-                        id: Self.generateOccurrenceId(subscriptionId: subscription.id, occurrenceDate: date),
-                        title: subscription.title,
-                        category: subscription.category ?? "General",
-                        amount: subscription.amount,
-                        date: date,
-                        type: subscription.isIncome ? .income : .expense,
-                        accountName: subscription.accountName,
-                        toAccountName: nil,
-                        currency: UserDefaults.standard.string(forKey: "mainCurrency") ?? "USD",
-                        sourcePlannedPaymentId: subscription.id,
-                        occurrenceDate: date
-                    )
-                    allTransactions.append(transaction)
-                    addedDates.insert(dateKey)
-                }
-            }
-            
-            // Add first occurrence (startDate)
-            addTransactionIfNeeded(for: startDate, isFirstOccurrence: true)
-            
-            // Generate subsequent occurrences
-            // BUG FIX 2: Preserve originalDay for month/year frequencies to prevent date drift
-            var currentDate = calculateNextDate(
-                from: startDate,
-                frequency: frequency,
-                interval: interval,
-                weekdays: weekdays,
-                originalDay: originalDay
-            )
-            
-            var iterationCount = 0
-            let maxIterations = 1000
-            
-            // Generate until we reach end date
-            while currentDate <= actualEndDate && iterationCount < maxIterations {
-                iterationCount += 1
-                
-                // Add transaction for current date (will check for duplicates internally)
-                addTransactionIfNeeded(for: currentDate, isFirstOccurrence: false)
-                
-                // Calculate next date - preserve originalDay to prevent drift
-                let nextDate = calculateNextDate(
-                    from: currentDate,
-                    frequency: frequency,
-                    interval: interval,
-                    weekdays: weekdays,
-                    originalDay: originalDay
-                )
-                
-                if nextDate <= currentDate || nextDate > actualEndDate {
-                    break
-                }
-                
-                currentDate = nextDate
-            }
-        }
-        
-        // CRITICAL FIX: Remove any remaining duplicates by ID (defensive programming)
-        // Group by ID and keep only the first occurrence
-        var seenIds: Set<UUID> = []
-        var uniqueTransactions: [Transaction] = []
-        for transaction in allTransactions {
-            if !seenIds.contains(transaction.id) {
-                uniqueTransactions.append(transaction)
-                seenIds.insert(transaction.id)
-            }
-        }
-        
-        // Sort by date and update published property on main thread
-        // CRITICAL: Always update on main thread to ensure UI refreshes
-        let sortedTransactions = uniqueTransactions.sorted { $0.date < $1.date }
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.upcomingTransactions = sortedTransactions
-            self.objectWillChange.send() // Explicitly trigger UI update
-        }
-    }
-    
-    // Helper function to calculate next date based on frequency
-    // BUG FIX 2: Added originalDay parameter to preserve the original day of month
-    // This prevents date drift (e.g., 31st -> 28th -> 28th should be 31st -> 28th -> 31st)
-    private func calculateNextDate(
-        from startDate: Date,
-        frequency: RepetitionFrequency,
-        interval: Int,
-        weekdays: Set<Int>,
-        originalDay: Int
-    ) -> Date {
+    /// Calculate next date based on frequency and interval
+    /// - Parameters:
+    ///   - startDate: The current date to calculate from
+    ///   - frequency: The repetition frequency (Day, Week, Month, Year)
+    ///   - interval: The interval value (e.g., every 2 months)
+    ///   - weekdays: Optional weekdays for weekly repetition
+    ///   - originalDay: Optional original day of month to preserve (for monthly/yearly frequencies)
+    private func calculateNextDate(from startDate: Date, frequency: String, interval: Int, weekdays: [Int]?, originalDay: Int? = nil) -> Date {
         let calendar = Calendar.current
         let today = Date()
         
         switch frequency {
-        case .day:
+        case "Day":
             var nextDate = calendar.date(byAdding: .day, value: interval, to: startDate) ?? startDate
-            // CRITICAL FIX: Use < (exclusive) to ensure today is included if startDate is today
-            // Only advance if the date is strictly in the past (before today)
-            let todayStart = calendar.startOfDay(for: today)
-            let nextDateStart = calendar.startOfDay(for: nextDate)
-            if nextDateStart < todayStart {
-                // Find next date in the future
-                while nextDateStart < todayStart {
-                    if let date = calendar.date(byAdding: .day, value: interval, to: nextDate) {
-                        nextDate = date
-                        let newNextDateStart = calendar.startOfDay(for: nextDate)
-                        if newNextDateStart >= todayStart {
-                            break
-                        }
-                    } else {
-                        break
-                    }
-                }
+            if nextDate <= today {
+                let daysFromToday = calendar.dateComponents([.day], from: today, to: nextDate).day ?? 0
+                let additionalDays = abs(daysFromToday) + interval
+                nextDate = calendar.date(byAdding: .day, value: additionalDays, to: today) ?? nextDate
             }
             return nextDate
             
-        case .week:
-            let todayStart = calendar.startOfDay(for: today)
-            if !weekdays.isEmpty {
+        case "Week":
+            if let weekdays = weekdays, !weekdays.isEmpty {
                 // Find next matching weekday
-                var candidate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-                var attempts = 0
-                while attempts < 7 {
-                    let weekday = calendar.component(.weekday, from: candidate)
-                    let adjustedWeekday = weekday == 1 ? 7 : weekday - 1
-                    let candidateStart = calendar.startOfDay(for: candidate)
-                    // CRITICAL FIX: Use >= (inclusive) to ensure today is included
-                    if weekdays.contains(adjustedWeekday) && candidateStart >= todayStart {
-                        return candidate
+                var checkDate = calendar.date(byAdding: .day, value: 1, to: startDate) ?? startDate
+                let maxDaysToCheck = 14
+                var daysChecked = 0
+                
+                while daysChecked < maxDaysToCheck {
+                    let weekday = calendar.component(.weekday, from: checkDate)
+                    let adjustedWeekday = weekday == 1 ? 7 : weekday - 1 // Convert to 0-6 (Mon-Sun)
+                    
+                    if weekdays.contains(adjustedWeekday) {
+                        // Found matching weekday
+                        if interval > 1 {
+                            // Add (interval - 1) weeks
+                            checkDate = calendar.date(byAdding: .weekOfYear, value: interval - 1, to: checkDate) ?? checkDate
+                        }
+                        if checkDate <= today {
+                            checkDate = calendar.date(byAdding: .weekOfYear, value: interval, to: checkDate) ?? checkDate
+                        }
+                        return checkDate
                     }
-                    if let next = calendar.date(byAdding: .day, value: 1, to: candidate) {
-                        candidate = next
-                    } else {
-                        break
-                    }
-                    attempts += 1
+                    
+                    checkDate = calendar.date(byAdding: .day, value: 1, to: checkDate) ?? checkDate
+                    daysChecked += 1
                 }
-                // Fallback to interval weeks
-                return calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-            } else {
-                var nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
-                let nextDateStart = calendar.startOfDay(for: nextDate)
-                // CRITICAL FIX: Use < (exclusive) to ensure today is included
-                if nextDateStart < todayStart {
-                    nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: nextDate) ?? nextDate
-                }
-                return nextDate
             }
             
-        case .month:
-            // BUG FIX 2: Calculate target month, then force originalDay
-            // This ensures 31st stays 31st for months that have it, and only clamps when necessary
-            let targetDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
+            // No weekdays specified, just add interval weeks
+            var nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: startDate) ?? startDate
+            if nextDate <= today {
+                nextDate = calendar.date(byAdding: .weekOfYear, value: interval, to: nextDate) ?? nextDate
+            }
+            return nextDate
             
-            // Get the target month/year
-            let targetComponents = calendar.dateComponents([.year, .month], from: targetDate)
+        case "Month":
+            // Preserve the original day of month to prevent date drift (e.g., 30th -> 28th -> 28th)
+            let dayToPreserve = originalDay ?? calendar.component(.day, from: startDate)
+            
+            // Calculate target month
+            var nextDate = calendar.date(byAdding: .month, value: interval, to: startDate) ?? startDate
+            
+            // Get the target month/year components
+            let targetComponents = calendar.dateComponents([.year, .month], from: nextDate)
             
             // Try to set the original day
             var components = targetComponents
-            components.day = originalDay
+            components.day = dayToPreserve
             
             // Check if the target month has enough days
-            if let daysInMonth = calendar.range(of: .day, in: .month, for: targetDate)?.count {
+            if let daysInMonth = calendar.range(of: .day, in: .month, for: nextDate)?.count {
                 // Clamp to last day of month if originalDay doesn't exist in target month
-                // But remember: we want to use originalDay for the NEXT iteration, not stick to clamped day
-                components.day = min(originalDay, daysInMonth)
+                components.day = min(dayToPreserve, daysInMonth)
             }
             
-            var nextDate = calendar.date(from: components) ?? targetDate
+            nextDate = calendar.date(from: components) ?? nextDate
             
-            // CRITICAL FIX: Use >= (inclusive) instead of > to ensure today is included
-            // Only advance if the date is strictly in the past (before today)
-            let todayStart = calendar.startOfDay(for: today)
-            let nextDateStart = calendar.startOfDay(for: nextDate)
-            
-            if nextDateStart < todayStart {
+            // Ensure it's in the future
+            if nextDate <= today {
                 // Calculate next month while preserving originalDay
                 if let nextMonth = calendar.date(byAdding: .month, value: interval, to: nextDate) {
                     let nextMonthComponents = calendar.dateComponents([.year, .month], from: nextMonth)
                     var nextComponents = nextMonthComponents
                     if let daysInNextMonth = calendar.range(of: .day, in: .month, for: nextMonth)?.count {
-                        nextComponents.day = min(originalDay, daysInNextMonth)
+                        nextComponents.day = min(dayToPreserve, daysInNextMonth)
                     } else {
-                        nextComponents.day = originalDay
+                        nextComponents.day = dayToPreserve
                     }
                     nextDate = calendar.date(from: nextComponents) ?? nextMonth
                 }
             }
-            
             return nextDate
             
-        case .year:
-            // BUG FIX 2: For yearly, also preserve originalDay to handle leap years correctly
-            let targetDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
+        case "Year":
+            // Preserve the original day of month to handle leap years correctly
+            let dayToPreserve = originalDay ?? calendar.component(.day, from: startDate)
             
-            // Get the target year/month
-            let targetComponents = calendar.dateComponents([.year, .month], from: targetDate)
+            // Calculate target year
+            var nextDate = calendar.date(byAdding: .year, value: interval, to: startDate) ?? startDate
+            
+            // Get the target year/month components
+            let targetComponents = calendar.dateComponents([.year, .month], from: nextDate)
             
             // Try to set the original day
             var components = targetComponents
-            components.day = originalDay
+            components.day = dayToPreserve
             
             // Check if the target month has enough days (handles leap years)
-            if let daysInMonth = calendar.range(of: .day, in: .month, for: targetDate)?.count {
-                components.day = min(originalDay, daysInMonth)
+            if let daysInMonth = calendar.range(of: .day, in: .month, for: nextDate)?.count {
+                components.day = min(dayToPreserve, daysInMonth)
             }
             
-            var nextDate = calendar.date(from: components) ?? targetDate
+            nextDate = calendar.date(from: components) ?? nextDate
             
-            // CRITICAL FIX: Use < (exclusive) instead of <= to ensure today is included
-            // Only advance if the date is strictly in the past (before today)
-            let todayStart = calendar.startOfDay(for: today)
-            let nextDateStart = calendar.startOfDay(for: nextDate)
-            
-            if nextDateStart < todayStart {
+            // Ensure it's in the future
+            if nextDate <= today {
                 // Calculate next year while preserving originalDay
                 if let nextYear = calendar.date(byAdding: .year, value: interval, to: nextDate) {
                     let nextYearComponents = calendar.dateComponents([.year, .month], from: nextYear)
                     var nextComponents = nextYearComponents
                     if let daysInNextYearMonth = calendar.range(of: .day, in: .month, for: nextYear)?.count {
-                        nextComponents.day = min(originalDay, daysInNextYearMonth)
+                        nextComponents.day = min(dayToPreserve, daysInNextYearMonth)
                     } else {
-                        nextComponents.day = originalDay
+                        nextComponents.day = dayToPreserve
                     }
                     nextDate = calendar.date(from: nextComponents) ?? nextYear
                 }
             }
-            
             return nextDate
+            
+        default:
+            return startDate
         }
     }
     
-    // MARK: - Unified Deletion Functions (REQUIREMENT D)
-    
-    /// Generate a deterministic occurrenceId from subscriptionId and date (REQUIREMENT A)
-    /// This ensures the same occurrence always has the same ID for reliable deletion
-    /// CRITICAL FIX: Uses deterministic hashing instead of non-deterministic Hasher()
-    static func generateOccurrenceId(subscriptionId: UUID, occurrenceDate: Date) -> UUID {
-        let calendar = Calendar.current
-        let dateOnly = calendar.startOfDay(for: occurrenceDate)
-        let dateString = ISO8601DateFormatter().string(from: dateOnly)
-        let combinedString = "\(subscriptionId.uuidString)-\(dateString)"
-        
-        // CRITICAL FIX: Use deterministic hash function
-        // Hasher() is NOT deterministic (uses random seed), which breaks SwiftUI's identity tracking
-        // Use a simple but deterministic hash: djb2 algorithm
-        var hash1: UInt64 = 5381
-        var hash2: UInt64 = 5381
-        for char in combinedString.utf8 {
-            hash1 = ((hash1 << 5) &+ hash1) &+ UInt64(char)
-        }
-        // Second hash for reversed string to get more entropy
-        let reversedString = String(combinedString.reversed())
-        for char in reversedString.utf8 {
-            hash2 = ((hash2 << 5) &+ hash2) &+ UInt64(char)
-        }
-        
-        // Convert hashes to UUID bytes (16 bytes total)
-        var bytes = [UInt8](repeating: 0, count: 16)
-        
-        // First 8 bytes from hash1
-        var value = hash1
-        for i in 0..<8 {
-            bytes[i] = UInt8(value & 0xFF)
-            value >>= 8
-        }
-        
-        // Second 8 bytes from hash2
-        value = hash2
-        for i in 8..<16 {
-            bytes[i] = UInt8(value & 0xFF)
-            value >>= 8
-        }
-        
-        // Set version (4) and variant bits for UUID v4 compatibility
-        bytes[6] = (bytes[6] & 0x0F) | 0x40 // Version 4
-        bytes[8] = (bytes[8] & 0x3F) | 0x80 // Variant 10
-        
-        // Format as UUID string
-        let uuidString = String(format: "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                               bytes[0], bytes[1], bytes[2], bytes[3],
-                               bytes[4], bytes[5],
-                               bytes[6], bytes[7],
-                               bytes[8], bytes[9],
-                               bytes[10], bytes[11],
-                               bytes[12], bytes[13], bytes[14], bytes[15])
-        
-        return UUID(uuidString: uuidString) ?? UUID()
-    }
-    
-    /// Delete all future occurrences from a specific date forward (REQUIREMENT D: Delete All Future)
-    /// - Parameters:
-    ///   - subscriptionId: The ID of the subscription
-    ///   - fromDate: Delete all occurrences with date >= fromDate (REQUIREMENT E.2: use >= not >)
-    func deleteAllFuture(subscriptionId: UUID, fromDate: Date) {
-        guard let index = subscriptions.firstIndex(where: { $0.id == subscriptionId }) else {
-            // Subscription not found - might be an old subscription that was deleted
-            // Regenerate transactions anyway to ensure UI is up to date
-            generateUpcomingTransactions()
-            DispatchQueue.main.async { [weak self] in
-                self?.objectWillChange.send()
+    /// Remove all generated transactions for a subscription
+    /// Uses DeleteTransactionChainUseCase for atomic deletion with balance rollbacks
+    private func removeGeneratedTransactions(for subscriptionId: UUID) {
+        Task {
+            do {
+                try await deleteTransactionChainUseCase.execute(sourceId: subscriptionId)
+            } catch {
+                print("Error deleting transaction chain for subscription \(subscriptionId): \(error)")
             }
+        }
+    }
+    
+    /// Delete a single occurrence (transaction) of a subscription
+    func deleteSingleOccurrence(transaction: Transaction) {
+        guard let subscriptionId = transaction.sourcePlannedPaymentId else { return }
+        
+        // First, delete the transaction to prevent it from being regenerated
+        transactionManager.deleteTransaction(transaction)
+        
+        // For non-repeating subscriptions, delete the entire subscription
+        if let subscription = getSubscription(id: subscriptionId), !subscription.isRepeating {
+            deleteSubscription(subscription)
             return
         }
         
-        let payment = subscriptions[index]
-        let calendar = Calendar.current
-        let fromDateStart = calendar.startOfDay(for: fromDate)
-        
-        // Set endDate to the day before fromDate to exclude fromDate and all later dates
-        // This ensures occurrences with date >= fromDate are excluded (REQUIREMENT E.2)
-        if let endDate = calendar.date(byAdding: .day, value: -1, to: fromDateStart) {
-            setEndDate(for: payment, endDate: endDate)
-        }
-        // Force UI refresh in both Planned and Future tabs
-        DispatchQueue.main.async { [weak self] in
-            self?.objectWillChange.send()
-        }
-    }
-    
-    /// Delete only a specific occurrence by date (REQUIREMENT D: Delete Only This)
-    /// - Parameters:
-    ///   - subscriptionId: The ID of the subscription
-    ///   - occurrenceDate: The exact date of the occurrence to delete
-    func deleteOccurrence(subscriptionId: UUID, occurrenceDate: Date) {
-        guard let index = subscriptions.firstIndex(where: { $0.id == subscriptionId }) else {
-            // Subscription not found - might be an old subscription that was deleted
-            // Regenerate transactions anyway to ensure UI is up to date
-            generateUpcomingTransactions()
-            DispatchQueue.main.async { [weak self] in
-                self?.objectWillChange.send()
+        // For repeating subscriptions, add the date to skippedDates to prevent regeneration
+        if let subscription = getSubscription(id: subscriptionId) {
+            var skippedDates = subscription.skippedDates ?? []
+            let transactionDate = Calendar.current.startOfDay(for: transaction.date)
+            
+            // Only add if not already in skippedDates
+            if !skippedDates.contains(where: { Calendar.current.isDate($0, inSameDayAs: transactionDate) }) {
+                skippedDates.append(transactionDate)
             }
-            return
-        }
-        
-        let payment = subscriptions[index]
-        let calendar = Calendar.current
-        let dateToSkip = calendar.startOfDay(for: occurrenceDate)
-        
-        // Add to skipped dates
-        skipDate(for: payment, date: dateToSkip)
-        // Force UI refresh in both Planned and Future tabs
-        DispatchQueue.main.async { [weak self] in
-            self?.objectWillChange.send()
+            
+            let updatedSubscription = PlannedPayment(
+                id: subscription.id,
+                title: subscription.title,
+                amount: subscription.amount,
+                date: subscription.date,
+                status: subscription.status,
+                accountId: subscription.accountId,
+                toAccountId: subscription.toAccountId,
+                category: subscription.category,
+                type: subscription.type,
+                isIncome: subscription.isIncome,
+                totalLoanAmount: subscription.totalLoanAmount,
+                remainingBalance: subscription.remainingBalance,
+                startDate: subscription.startDate,
+                interestRate: subscription.interestRate,
+                linkedCreditId: subscription.linkedCreditId,
+                isRepeating: subscription.isRepeating,
+                repetitionFrequency: subscription.repetitionFrequency,
+                repetitionInterval: subscription.repetitionInterval,
+                selectedWeekdays: subscription.selectedWeekdays,
+                skippedDates: skippedDates,
+                endDate: subscription.endDate
+            )
+            
+            // Update subscription without regenerating transactions (since we already deleted it)
+            if let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) {
+                subscriptions[index] = updatedSubscription
+                saveData()
+            }
+            
+            // Ensure we still have 12 months of future transactions
+            ensureFutureTransactions()
         }
     }
     
-    /// Reload all subscriptions from storage and publish changes (REQUIREMENT F)
-    func reloadAll() {
-        loadData()
-        objectWillChange.send()
+    /// Delete all occurrences of a subscription
+    func deleteAllOccurrences(subscriptionId: UUID) {
+        guard let subscription = getSubscription(id: subscriptionId) else { return }
+        // Delete subscription (this removes all transactions and stops generation)
+        deleteSubscription(subscription)
+    }
+    
+    // MARK: - Reset
+    
+    func reset() {
+        // Remove all generated transactions first
+        for subscription in subscriptions {
+            removeGeneratedTransactions(for: subscription.id)
+        }
+        subscriptions = []
+        if let modelContext = modelContext {
+            let descriptor = FetchDescriptor<SDPlannedPayment>()
+            if let sdPayments = try? modelContext.fetch(descriptor) {
+                for sdPayment in sdPayments {
+                    modelContext.delete(sdPayment)
+                }
+                try? modelContext.save()
+            }
+        } else {
+            UserDefaults.standard.removeObject(forKey: subscriptionsKey)
+        }
     }
     
     // MARK: - Persistence
     
     private func saveData() {
-        if let encoded = try? JSONEncoder().encode(subscriptions) {
-            UserDefaults.standard.set(encoded, forKey: subscriptionsKey)
-            // REQUIREMENT F: Publish changes immediately for UI updates
-            DispatchQueue.main.async { [weak self] in
-                self?.objectWillChange.send()
+        guard let modelContext = modelContext else {
+            // Fallback to UserDefaults if ModelContext is not available
+            if let encoded = try? JSONEncoder().encode(subscriptions) {
+                UserDefaults.standard.set(encoded, forKey: subscriptionsKey)
+            }
+            return
+        }
+        
+        // Get all existing SDPlannedPayments
+        let descriptor = FetchDescriptor<SDPlannedPayment>()
+        guard let existingSDPayments = try? modelContext.fetch(descriptor) else { return }
+        
+        // Create a map of existing payments by ID
+        var existingMap: [UUID: SDPlannedPayment] = [:]
+        for sdPayment in existingSDPayments {
+            existingMap[sdPayment.id] = sdPayment
+        }
+        
+        // Update or create SDPlannedPayments
+        for payment in subscriptions {
+            if let existing = existingMap[payment.id] {
+                // Update existing
+                let statusString: String
+                switch payment.status {
+                case .upcoming: statusString = "upcoming"
+                case .past: statusString = "past"
+                }
+                
+                let typeString: String
+                switch payment.type {
+                case .subscription: typeString = "subscription"
+                case .loan: typeString = "loan"
+                }
+                
+                existing.title = payment.title
+                existing.amount = payment.amount
+                existing.date = payment.date
+                existing.status = statusString
+                existing.accountId = payment.accountId
+                existing.toAccountId = payment.toAccountId
+                existing.category = payment.category
+                existing.type = typeString
+                existing.isIncome = payment.isIncome
+                existing.totalLoanAmount = payment.totalLoanAmount
+                existing.remainingBalance = payment.remainingBalance
+                existing.startDate = payment.startDate
+                existing.interestRate = payment.interestRate
+                existing.linkedCreditId = payment.linkedCreditId
+                existing.isRepeating = payment.isRepeating
+                existing.repetitionFrequency = payment.repetitionFrequency
+                existing.repetitionInterval = payment.repetitionInterval
+                existing.selectedWeekdays = payment.selectedWeekdays
+                existing.skippedDates = payment.skippedDates
+                existing.endDate = payment.endDate
+            } else {
+                // Create new
+                modelContext.insert(SDPlannedPayment.from(payment))
             }
         }
+        
+        // Delete SDPlannedPayments that are no longer in subscriptions array
+        let paymentIds = Set(subscriptions.map { $0.id })
+        for sdPayment in existingSDPayments {
+            if !paymentIds.contains(sdPayment.id) {
+                modelContext.delete(sdPayment)
+            }
+        }
+        
+        try? modelContext.save()
     }
     
     private func loadData() {
-        if let data = UserDefaults.standard.data(forKey: subscriptionsKey),
-           let decoded = try? JSONDecoder().decode([PlannedPayment].self, from: data) {
-            subscriptions = decoded
-            generateUpcomingTransactions() // Regenerate after loading
+        guard let modelContext = modelContext else {
+            // Fallback to UserDefaults if ModelContext is not available
+            if let data = UserDefaults.standard.data(forKey: subscriptionsKey),
+               let decoded = try? JSONDecoder().decode([PlannedPayment].self, from: data) {
+                subscriptions = decoded
+            }
+            return
+        }
+        
+        let descriptor = FetchDescriptor<SDPlannedPayment>()
+        
+        if let sdPayments = try? modelContext.fetch(descriptor) {
+            subscriptions = sdPayments.compactMap { $0.toPlannedPayment() }
         }
     }
 }
+

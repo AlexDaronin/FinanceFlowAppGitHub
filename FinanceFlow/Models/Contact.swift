@@ -55,15 +55,21 @@ struct Contact: Identifiable, Codable {
     }
     
     // Calculate net balance from transactions (excluding settled transactions)
+    // Положительное значение = мне должны (owedToMe)
+    // Отрицательное значение = я должен (iOwe)
     func netBalance(from transactions: [DebtTransaction]) -> Double {
         transactions
             .filter { $0.contactId == id && !$0.isSettled } // Only count active (non-settled) transactions
             .reduce(0) { total, transaction in
                 switch transaction.type {
-                case .lent: // They owe me (positive)
+                case .lent: // Я дал в долг - мне должны (положительное)
                     return total + transaction.amount
-                case .borrowed: // I owe them (negative)
+                case .lentReturn: // Я вернул долг - уменьшает долг (отрицательное уменьшает положительный баланс)
                     return total - transaction.amount
+                case .borrowed: // Мне дали в долг - я должен (отрицательное)
+                    return total - transaction.amount
+                case .borrowedReturn: // Мне вернули долг - уменьшает долг (положительное уменьшает отрицательный баланс)
+                    return total + transaction.amount
                 }
             }
     }

@@ -15,8 +15,8 @@ struct Transaction: Identifiable, Codable, Equatable {
     let amount: Double
     let date: Date
     let type: TransactionType
-    let accountName: String
-    let toAccountName: String?
+    let accountId: UUID // Changed from accountName to accountId
+    let toAccountId: UUID? // Changed from toAccountName to toAccountId
     let currency: String
     
     // ISSUE 2 FIX: Optional fields for scheduled repeating payments
@@ -24,19 +24,20 @@ struct Transaction: Identifiable, Codable, Equatable {
     let sourcePlannedPaymentId: UUID? // The ID of the PlannedPayment that generated this occurrence
     let occurrenceDate: Date? // The specific date of this occurrence (same as date, but stored for clarity)
     
-    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil, currency: String = "USD", sourcePlannedPaymentId: UUID? = nil, occurrenceDate: Date? = nil) {
+    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountId: UUID, toAccountId: UUID? = nil, currency: String = "USD", sourcePlannedPaymentId: UUID? = nil, occurrenceDate: Date? = nil) {
         self.id = id
         self.title = title
         self.category = category
         self.amount = amount
         self.date = date
         self.type = type
-        self.accountName = accountName
-        self.toAccountName = toAccountName
+        self.accountId = accountId
+        self.toAccountId = toAccountId
         self.currency = currency
         self.sourcePlannedPaymentId = sourcePlannedPaymentId
         self.occurrenceDate = occurrenceDate ?? date // Default to date if not provided
     }
+    
     
     func displayAmount(currencyCode: String? = nil) -> String {
         let code = currencyCode ?? currency
@@ -53,16 +54,18 @@ struct Transaction: Identifiable, Codable, Equatable {
         }
     }
     
-    static let sample: [Transaction] = [
-        Transaction(title: "Groceries", category: "Food & Dining", amount: 82.45, date: Date().addingTimeInterval(-60 * 60 * 24 * 1), type: .expense, accountName: "Main Card", currency: "USD"),
-        Transaction(title: "Salary", category: "Income", amount: 2400, date: Date().addingTimeInterval(-60 * 60 * 24 * 2), type: .income, accountName: "Main Card", currency: "USD"),
-        Transaction(title: "Gym Membership", category: "Health", amount: 45.99, date: Date().addingTimeInterval(-60 * 60 * 24 * 3), type: .expense, accountName: "Main Card", currency: "USD"),
-        Transaction(title: "Coffee", category: "Food & Dining", amount: 6.75, date: Date().addingTimeInterval(-60 * 60 * 24 * 4), type: .expense, accountName: "Cash", currency: "USD"),
-        Transaction(title: "Freelance", category: "Income", amount: 480, date: Date().addingTimeInterval(-60 * 60 * 24 * 5), type: .income, accountName: "Savings", currency: "USD"),
-        Transaction(title: "Electric Bill", category: "Utilities", amount: 110.34, date: Date().addingTimeInterval(-60 * 60 * 24 * 6), type: .expense, accountName: "Main Card", currency: "USD"),
-        Transaction(title: "Transfer to Savings", category: "Transfer", amount: 300, date: Date().addingTimeInterval(-60 * 60 * 24 * 7), type: .transfer, accountName: "Main Card", currency: "USD"),
-        Transaction(title: "Debt Repayment", category: "Debt", amount: 150, date: Date().addingTimeInterval(-60 * 60 * 24 * 8), type: .debt, accountName: "Loans", currency: "USD")
-    ]
+    static func sample(accountIds: [UUID] = [UUID(), UUID(), UUID()]) -> [Transaction] {
+        [
+            Transaction(title: "Groceries", category: "Food & Dining", amount: 82.45, date: Date().addingTimeInterval(-60 * 60 * 24 * 1), type: .expense, accountId: accountIds[0], currency: "USD"),
+            Transaction(title: "Salary", category: "Income", amount: 2400, date: Date().addingTimeInterval(-60 * 60 * 24 * 2), type: .income, accountId: accountIds[0], currency: "USD"),
+            Transaction(title: "Gym Membership", category: "Health", amount: 45.99, date: Date().addingTimeInterval(-60 * 60 * 24 * 3), type: .expense, accountId: accountIds[0], currency: "USD"),
+            Transaction(title: "Coffee", category: "Food & Dining", amount: 6.75, date: Date().addingTimeInterval(-60 * 60 * 24 * 4), type: .expense, accountId: accountIds[1], currency: "USD"),
+            Transaction(title: "Freelance", category: "Income", amount: 480, date: Date().addingTimeInterval(-60 * 60 * 24 * 5), type: .income, accountId: accountIds[2], currency: "USD"),
+            Transaction(title: "Electric Bill", category: "Utilities", amount: 110.34, date: Date().addingTimeInterval(-60 * 60 * 24 * 6), type: .expense, accountId: accountIds[0], currency: "USD"),
+            Transaction(title: "Transfer to Savings", category: "Transfer", amount: 300, date: Date().addingTimeInterval(-60 * 60 * 24 * 7), type: .transfer, accountId: accountIds[0], toAccountId: accountIds[2], currency: "USD"),
+            Transaction(title: "Debt Repayment", category: "Debt", amount: 150, date: Date().addingTimeInterval(-60 * 60 * 24 * 8), type: .debt, accountId: accountIds[0], currency: "USD")
+        ]
+    }
 }
 
 enum TransactionType: String, CaseIterable, Identifiable, Codable {
@@ -120,11 +123,11 @@ struct TransactionDraft: Identifiable {
     var amount: Double
     var date: Date
     var type: TransactionType
-    var accountName: String
-    var toAccountName: String? // For transfer transactions
+    var accountId: UUID // Changed from accountName to accountId
+    var toAccountId: UUID? // Changed from toAccountName to toAccountId
     var currency: String
     
-    static func empty(currency: String = "USD", accountName: String = "") -> TransactionDraft {
+    static func empty(currency: String = "USD", accountId: UUID? = nil) -> TransactionDraft {
         TransactionDraft(
             id: UUID(),
             title: "",
@@ -132,21 +135,21 @@ struct TransactionDraft: Identifiable {
             amount: 0,
             date: Date(),
             type: .expense,
-            accountName: accountName,
-            toAccountName: nil,
+            accountId: accountId ?? UUID(),
+            toAccountId: nil,
             currency: currency
         )
     }
     
-    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountName: String, toAccountName: String? = nil, currency: String = "USD") {
+    init(id: UUID = UUID(), title: String, category: String, amount: Double, date: Date, type: TransactionType, accountId: UUID, toAccountId: UUID? = nil, currency: String = "USD") {
         self.id = id
         self.title = title
         self.category = category
         self.amount = amount
         self.date = date
         self.type = type
-        self.accountName = accountName
-        self.toAccountName = toAccountName
+        self.accountId = accountId
+        self.toAccountId = toAccountId
         self.currency = currency
     }
     
@@ -157,27 +160,27 @@ struct TransactionDraft: Identifiable {
         self.amount = transaction.amount
         self.date = transaction.date
         self.type = transaction.type
-        self.accountName = transaction.accountName
-        self.toAccountName = transaction.toAccountName
+        self.accountId = transaction.accountId
+        self.toAccountId = transaction.toAccountId
         self.currency = transaction.currency
     }
     
-    init(type: TransactionType, currency: String = "USD", accountName: String = "") {
+    init(type: TransactionType, currency: String = "USD", accountId: UUID? = nil) {
         self = TransactionDraft(
             title: "",
             category: "",
             amount: 0,
             date: Date(),
             type: type,
-            accountName: accountName,
-            toAccountName: type == .transfer ? nil : nil,
+            accountId: accountId ?? UUID(),
+            toAccountId: nil,
             currency: currency
         )
     }
     
     var isValid: Bool {
         let hasAmount = amount > 0
-        let hasValidTransfer = type != .transfer || (toAccountName != nil && toAccountName != accountName)
+        let hasValidTransfer = type != .transfer || (toAccountId != nil && toAccountId != accountId)
         return hasAmount && hasValidTransfer
     }
     
@@ -189,8 +192,8 @@ struct TransactionDraft: Identifiable {
             amount: abs(amount),
             date: date,
             type: type,
-            accountName: accountName,
-            toAccountName: toAccountName,
+            accountId: accountId,
+            toAccountId: toAccountId,
             currency: currency
         )
     }
@@ -208,11 +211,35 @@ enum TransactionFormMode: Equatable, Hashable {
             return String(localized: "Edit Transaction", comment: "Edit transaction form title")
         }
     }
+    
+    var transactionId: UUID? {
+        switch self {
+        case .add:
+            return nil
+        case .edit(let id):
+            return id
+        }
+    }
 }
 
 enum TransactionTab {
     case past
     case planned
     case missed
+}
+
+// MARK: - Helper Extensions for Account Resolution
+
+extension Transaction {
+    /// Get account name from AccountManager
+    func accountName(accountManager: AccountManagerAdapter) -> String {
+        accountManager.getAccount(id: accountId)?.name ?? "Unknown Account"
+    }
+    
+    /// Get destination account name for transfers
+    func toAccountName(accountManager: AccountManagerAdapter) -> String? {
+        guard let toAccountId = toAccountId else { return nil }
+        return accountManager.getAccount(id: toAccountId)?.name
+    }
 }
 

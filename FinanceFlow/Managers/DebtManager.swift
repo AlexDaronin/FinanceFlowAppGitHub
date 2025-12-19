@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import SwiftData
 
 class DebtManager: ObservableObject {
     @Published var contacts: [Contact] = []
@@ -15,8 +16,15 @@ class DebtManager: ObservableObject {
     
     private let contactsKey = "savedContacts"
     private let transactionsKey = "savedDebtTransactions"
+    private var modelContext: ModelContext?
     
-    init() {
+    init(modelContext: ModelContext? = nil) {
+        self.modelContext = modelContext
+        loadData()
+    }
+    
+    func setModelContext(_ context: ModelContext) {
+        self.modelContext = context
         loadData()
     }
     
@@ -118,31 +126,135 @@ class DebtManager: ObservableObject {
         getTotalToPay() - getTotalToReceive()
     }
     
-    // MARK: - Persistence
+    // MARK: - Reset
     
-    private func saveData() {
-        // Save contacts
-        if let encoded = try? JSONEncoder().encode(contacts) {
-            UserDefaults.standard.set(encoded, forKey: contactsKey)
-        }
-        
-        // Save transactions
-        if let encoded = try? JSONEncoder().encode(transactions) {
-            UserDefaults.standard.set(encoded, forKey: transactionsKey)
+    func reset() {
+        contacts = []
+        transactions = []
+        if let modelContext = modelContext {
+            let contactsDescriptor = FetchDescriptor<SDContact>()
+            let transactionsDescriptor = FetchDescriptor<SDDebtTransaction>()
+            
+            if let sdContacts = try? modelContext.fetch(contactsDescriptor) {
+                for sdContact in sdContacts {
+                    modelContext.delete(sdContact)
+                }
+            }
+            
+            if let sdTransactions = try? modelContext.fetch(transactionsDescriptor) {
+                for sdTransaction in sdTransactions {
+                    modelContext.delete(sdTransaction)
+                }
+            }
+            
+            try? modelContext.save()
+        } else {
+            UserDefaults.standard.removeObject(forKey: contactsKey)
+            UserDefaults.standard.removeObject(forKey: transactionsKey)
         }
     }
     
+    // MARK: - Persistence
+    
+    private func saveData() {
+        guard let modelContext = modelContext else {
+            // Fallback to UserDefaults if ModelContext is not available
+            if let encoded = try? JSONEncoder().encode(contacts) {
+                UserDefaults.standard.set(encoded, forKey: contactsKey)
+            }
+            if let encoded = try? JSONEncoder().encode(transactions) {
+                UserDefaults.standard.set(encoded, forKey: transactionsKey)
+            }
+            return
+        }
+        
+        // Save contacts
+        let contactsDescriptor = FetchDescriptor<SDContact>()
+        guard let existingSDContacts = try? modelContext.fetch(contactsDescriptor) else { return }
+        
+        var contactsMap: [UUID: SDContact] = [:]
+        for sdContact in existingSDContacts {
+            contactsMap[sdContact.id] = sdContact
+        }
+        
+        for contact in contacts {
+            if let existing = contactsMap[contact.id] {
+                existing.name = contact.name
+                existing.avatarColor = contact.avatarColor
+            } else {
+                modelContext.insert(SDContact.from(contact))
+            }
+        }
+        
+        let contactIds = Set(contacts.map { $0.id })
+        for sdContact in existingSDContacts {
+            if !contactIds.contains(sdContact.id) {
+                modelContext.delete(sdContact)
+            }
+        }
+        
+        // Save transactions
+        let transactionsDescriptor = FetchDescriptor<SDDebtTransaction>()
+        guard let existingSDTransactions = try? modelContext.fetch(transactionsDescriptor) else { return }
+        
+        var transactionsMap: [UUID: SDDebtTransaction] = [:]
+        for sdTransaction in existingSDTransactions {
+            transactionsMap[sdTransaction.id] = sdTransaction
+        }
+        
+        for transaction in transactions {
+            if let existing = transactionsMap[transaction.id] {
+                existing.contactId = transaction.contactId
+                existing.amount = transaction.amount
+                existing.type = transaction.type.rawValue
+                existing.date = transaction.date
+                existing.note = transaction.note
+                existing.isSettled = transaction.isSettled
+                existing.accountId = transaction.accountId
+                existing.currency = transaction.currency
+                existing.createdAt = transaction.createdAt
+                existing.updatedAt = transaction.updatedAt
+            } else {
+                modelContext.insert(SDDebtTransaction.from(transaction))
+            }
+        }
+        
+        let transactionIds = Set(transactions.map { $0.id })
+        for sdTransaction in existingSDTransactions {
+            if !transactionIds.contains(sdTransaction.id) {
+                modelContext.delete(sdTransaction)
+            }
+        }
+        
+        try? modelContext.save()
+    }
+    
     private func loadData() {
+        guard let modelContext = modelContext else {
+            // Fallback to UserDefaults if ModelContext is not available
+            if let data = UserDefaults.standard.data(forKey: contactsKey),
+               let decoded = try? JSONDecoder().decode([Contact].self, from: data) {
+                contacts = decoded
+            }
+            if let data = UserDefaults.standard.data(forKey: transactionsKey),
+               let decoded = try? JSONDecoder().decode([DebtTransaction].self, from: data) {
+                transactions = decoded
+            }
+            return
+        }
+        
         // Load contacts
-        if let data = UserDefaults.standard.data(forKey: contactsKey),
-           let decoded = try? JSONDecoder().decode([Contact].self, from: data) {
-            contacts = decoded
+        let contactsDescriptor = FetchDescriptor<SDContact>()
+        if let sdContacts = try? modelContext.fetch(contactsDescriptor) {
+            contacts = sdContacts.map { $0.toContact() }
         }
         
         // Load transactions
-        if let data = UserDefaults.standard.data(forKey: transactionsKey),
-           let decoded = try? JSONDecoder().decode([DebtTransaction].self, from: data) {
-            transactions = decoded
+        let transactionsDescriptor = FetchDescriptor<SDDebtTransaction>(
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
+        )
+        if let sdTransactions = try? modelContext.fetch(transactionsDescriptor) {
+            transactions = sdTransactions.map { $0.toDebtTransaction() }
         }
     }
 }

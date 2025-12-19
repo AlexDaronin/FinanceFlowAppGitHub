@@ -155,6 +155,9 @@
 "Data & Backup" = "Данные и резервное копирование";
 "Export local backup" = "Экспорт локальной резервной копии";
 "Restore from backup" = "Восстановить из резервной копии";
+"Reset all data" = "Сбросить все данные";
+"This will permanently delete all transactions, accounts, subscriptions, credits, and debts. This action cannot be undone." = "Это действие навсегда удалит все транзакции, счета, подписки, кредиты и долги. Это действие нельзя отменить.";
+"Are you sure you want to reset all data? This will permanently delete all your transactions, accounts, subscriptions, credits, and debts. This action cannot be undone." = "Вы уверены, что хотите сбросить все данные? Это действие навсегда удалит все ваши транзакции, счета, подписки, кредиты и долги. Это действие нельзя отменить.";
 "Premium" = "Премиум";
 "Cancel subscription" = "Отменить подписку";
 "Start premium trial" = "Начать премиум пробный период";
@@ -191,3 +194,128 @@
 "Add" = "Добавить";
 "Month" = "Месяц";
 "Year" = "Год";
+"Day" = "День";
+"Week" = "Неделя";
+"day" = "день";
+"week" = "неделя";
+"month" = "месяц";
+"year" = "год";
+"Monday" = "Понедельник";
+"Tuesday" = "Вторник";
+"Wednesday" = "Среда";
+"Thursday" = "Четверг";
+"Friday" = "Пятница";
+"Saturday" = "Суббота";
+"Sunday" = "Воскресенье";
+"Next payment date" = "Дата следующего платежа";
+"Delete Only This" = "Удалить только это";
+"Delete All" = "Удалить все";
+"Do you want to delete only this occurrence or all future occurrences of this subscription?" = "Вы хотите удалить только это событие или все будущие события этой подписки?";
+"Are you sure you want to delete this subscription? This action cannot be undone." = "Вы уверены, что хотите удалить эту подписку? Это действие нельзя отменить.";
+"Repeat operation" = "Повторять операцию";
+"Repetition frequency" = "Частота повторения";
+"Repeat every" = "Повторять каждые";
+"No categories available" = "Нет доступных категорий";
+"Monthly expense" = "Месячный расход";
+"Monthly income" = "Месячный доход";
+"Monthly transfers" = "Месячные переводы";
+"Next Month" = "Следующий месяц";
+"Manage categories" = "Управление категориями";
+"Last 3 Months" = "Последние 3 месяца";
+"Last 6 Months" = "Последние 6 месяцев";
+"Last 12 Months" = "Последние 12 месяцев";
+"All Time" = "За все время";
+"Time Range" = "Временной диапазон";
+
+/* Credits & Loans */
+"Total Loan Amount" = "Общая сумма кредита";
+"Loan Name" = "Название кредита";
+"e.g., Car Loan" = "например, Автокредит";
+"Monthly Payment" = "Ежемесячный платеж";
+"Track in Planned Payments" = "Отслеживать в запланированных платежах";
+"Start Date" = "Дата начала";
+"Payment: %@" = "Платеж: %@";
+"Edit Credit" = "Редактировать кредит";
+"Add Credit" = "Добавить кредит";
+"Delete Credit" = "Удалить кредит";
+"Are you sure you want to delete \"%@\"? This action cannot be undone." = "Вы уверены, что хотите удалить \"%@\"? Это действие нельзя отменить.";
+"Loan" = "Кредит";
+"Make Payment" = "Совершить платеж";
+"Pay" = "Оплатить";
+"Pay Now %@" = "Оплатить сейчас %@";
+"Delete Loan" = "Удалить кредит";
+"From: %@" = "Со счета: %@";
+"%d%% Paid" = "%d%% Оплачено";
+"Total Amount" = "Общая сумма";
+"Monthly Payment" = "Ежемесячный платеж";
+"Upcoming Payments" = "Предстоящие платежи";
+"+ %d more" = "+ еще %d";
+
+/* Debts */
+"Track money between people" = "Отслеживание денег между людьми";
+"To Receive" = "Должны мне";
+"To Pay" = "Я должен";
+"No debts" = "Нет долгов";
+"Date" = "Дата";
+"Add a note (optional)" = "Добавить заметку (необязательно)";
+"Delete Transaction" = "Удалить транзакцию";
+"Are you sure you want to delete this transaction? This action cannot be undone." = "Вы уверены, что хотите удалить эту транзакцию? Это действие нельзя отменить.";
+"Select or create contact" = "Выберите или создайте контакт";
+"Create New Contact" = "Создать новый контакт";
+"Contact Name" = "Имя контакта";
+"Net Balance" = "Чистый баланс";
+"Transaction History" = "История транзакций";
+"No transactions yet" = "Пока нет транзакций";
+"Delete Contact" = "Удалить контакт";
+"Are you sure you want to delete this contact? All associated transaction history will be permanently deleted." = "Вы уверены, что хотите удалить этот контакт? Вся связанная история транзакций будет безвозвратно удалена.";
+"Are you sure you want to delete this %@ transaction of %@?" = "Вы уверены, что хотите удалить эту %@ транзакцию на сумму %@?";
+"Settled" = "Погашено";
+
+/* Recurring */
+"Recurring Income" = "Повторяющийся доход";
+"Recurring Expense" = "Повторяющийся расход";
+"Recurring Transfer" = "Повторяющийся перевод";
+"Recurring Debt" = "Повторяющийся долг";
+"subcategory" = "подкатегория";
+"subcategories" = "подкатегории";
+
+/* Charts & Statistics */
+"Current month" = "Текущий месяц";
+"Net Balance" = "Чистый баланс";
+"Spending Projection" = "Прогноз расходов";
+"No spending data available" = "Нет данных о расходах";
+
+/* Accounts */
+"No accounts" = "Нет счетов";
+"Select Account Icon" = "Выбрать иконку счета";
+"Current Balance" = "Текущий баланс";
+"Delete Account" = "Удалить счет";
+"Are you sure you want to delete this account? All associated transactions will also be deleted. This action cannot be undone." = "Вы уверены, что хотите удалить этот счет? Все связанные транзакции также будут удалены. Это действие нельзя отменить.";
+"No transactions yet" = "Пока нет транзакций";
+
+/* Debts - Additional */
+"They Owe Me" = "Должны мне";
+"I Owe Them" = "Я должен";
+"They owe you" = "Они вам должны";
+"You owe them" = "Вы им должны";
+"I lent" = "Я дал в долг";
+"I borrowed" = "Я взял в долг";
+"Lent to %@" = "Дал в долг %@";
+"Borrowed from %@" = "Взял в долг у %@";
+"I lent / I returned debt" = "Я дал в долг / Я вернул долг";
+"They lent / They returned debt" = "Мне дали в долг / Мне вернули долг";
+"Return debt" = "Вернуть долг";
+"Owed to me" = "Должны мне";
+"I owe" = "Я должен";
+"Returned" = "Возвращено";
+"I returned debt" = "Я вернул долг";
+"They returned debt" = "Мне вернули долг";
+"Edit Debt" = "Редактировать долг";
+"Edit Contact" = "Редактировать контакт";
+"Contact Details" = "Детали контакта";
+"Avatar Color" = "Цвет аватара";
+"Enter name" = "Введите имя";
+"Поступления" = "Поступления";
+"Расходы" = "Расходы";
+"Баланс на" = "Баланс на";
+"Баланс" = "Баланс";

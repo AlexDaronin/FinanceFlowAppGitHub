@@ -28,8 +28,8 @@ struct PlannedPayment: Identifiable, Codable {
     let amount: Double // Monthly payment amount
     let date: Date
     let status: PlannedPaymentStatus
-    let accountName: String
-    let toAccountName: String? // For transfer transactions (e.g., to credit account)
+    let accountId: UUID // Changed from accountName to accountId
+    let toAccountId: UUID? // Changed from toAccountName to toAccountId
     let category: String?
     let type: PlannedPaymentType
     let isIncome: Bool // true for income (salary, etc.), false for expenses (subscriptions)
@@ -55,8 +55,8 @@ struct PlannedPayment: Identifiable, Codable {
         amount: Double,
         date: Date,
         status: PlannedPaymentStatus,
-        accountName: String,
-        toAccountName: String? = nil,
+        accountId: UUID,
+        toAccountId: UUID? = nil,
         category: String? = nil,
         type: PlannedPaymentType = .subscription,
         isIncome: Bool = false,
@@ -77,8 +77,8 @@ struct PlannedPayment: Identifiable, Codable {
         self.amount = amount
         self.date = date
         self.status = status
-        self.accountName = accountName
-        self.toAccountName = toAccountName
+        self.accountId = accountId
+        self.toAccountId = toAccountId
         self.category = category
         self.type = type
         self.isIncome = isIncome
@@ -111,41 +111,43 @@ struct PlannedPayment: Identifiable, Codable {
         return Int(ceil(remaining / amount))
     }
     
-    static let sample: [PlannedPayment] = [
-        // Subscriptions
-        PlannedPayment(title: "Spotify Premium", amount: 9.99, date: Calendar.current.date(byAdding: .day, value: 5, to: Date()) ?? Date(), status: .upcoming, accountName: "Main Card", category: "Entertainment", type: .subscription),
-        PlannedPayment(title: "Netflix", amount: 15.99, date: Calendar.current.date(byAdding: .day, value: 8, to: Date()) ?? Date(), status: .upcoming, accountName: "Main Card", category: "Entertainment", type: .subscription),
-        PlannedPayment(title: "YouTube Premium", amount: 11.99, date: Calendar.current.date(byAdding: .day, value: 11, to: Date()) ?? Date(), status: .upcoming, accountName: "Main Card", category: "Entertainment", type: .subscription),
-        PlannedPayment(title: "Phone Bill", amount: 45.5, date: Calendar.current.date(byAdding: .day, value: -4, to: Date()) ?? Date(), status: .past, accountName: "Main Card", category: "Utilities", type: .subscription),
-        
-        // Loans
-        PlannedPayment(
-            title: "Car Loan",
-            amount: 450,
-            date: Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date(),
-            status: .upcoming,
-            accountName: "Main Card",
-            category: "Debt",
-            type: .loan,
-            totalLoanAmount: 25000,
-            remainingBalance: 13000,
-            startDate: Calendar.current.date(byAdding: .month, value: -12, to: Date()),
-            interestRate: 4.5
-        ),
-        PlannedPayment(
-            title: "Home Mortgage",
-            amount: 1500,
-            date: Calendar.current.date(byAdding: .day, value: 15, to: Date()) ?? Date(),
-            status: .upcoming,
-            accountName: "Main Card",
-            category: "Housing",
-            type: .loan,
-            totalLoanAmount: 250000,
-            remainingBalance: 200000,
-            startDate: Calendar.current.date(byAdding: .month, value: -24, to: Date()),
-            interestRate: 3.2
-        )
-    ]
+    static func sample(accountId: UUID = UUID()) -> [PlannedPayment] {
+        [
+            // Subscriptions
+            PlannedPayment(title: "Spotify Premium", amount: 9.99, date: Calendar.current.date(byAdding: .day, value: 5, to: Date()) ?? Date(), status: .upcoming, accountId: accountId, category: "Entertainment", type: .subscription),
+            PlannedPayment(title: "Netflix", amount: 15.99, date: Calendar.current.date(byAdding: .day, value: 8, to: Date()) ?? Date(), status: .upcoming, accountId: accountId, category: "Entertainment", type: .subscription),
+            PlannedPayment(title: "YouTube Premium", amount: 11.99, date: Calendar.current.date(byAdding: .day, value: 11, to: Date()) ?? Date(), status: .upcoming, accountId: accountId, category: "Entertainment", type: .subscription),
+            PlannedPayment(title: "Phone Bill", amount: 45.5, date: Calendar.current.date(byAdding: .day, value: -4, to: Date()) ?? Date(), status: .past, accountId: accountId, category: "Utilities", type: .subscription),
+            
+            // Loans
+            PlannedPayment(
+                title: "Car Loan",
+                amount: 450,
+                date: Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date(),
+                status: .upcoming,
+                accountId: accountId,
+                category: "Debt",
+                type: .loan,
+                totalLoanAmount: 25000,
+                remainingBalance: 13000,
+                startDate: Calendar.current.date(byAdding: .month, value: -12, to: Date()),
+                interestRate: 4.5
+            ),
+            PlannedPayment(
+                title: "Home Mortgage",
+                amount: 1500,
+                date: Calendar.current.date(byAdding: .day, value: 15, to: Date()) ?? Date(),
+                status: .upcoming,
+                accountId: accountId,
+                category: "Housing",
+                type: .loan,
+                totalLoanAmount: 250000,
+                remainingBalance: 200000,
+                startDate: Calendar.current.date(byAdding: .month, value: -24, to: Date()),
+                interestRate: 3.2
+            )
+        ]
+    }
 }
 
 enum PlannedPaymentStatus: Codable {
@@ -186,5 +188,20 @@ struct PlannedDataPoint: Identifiable {
         .init(dayLabel: "10 Nov", planned: 6000, actual: 4800),
         .init(dayLabel: "17 Nov", planned: 6500, actual: 5211)
     ]
+}
+
+// MARK: - Helper Extensions for Account Resolution
+
+extension PlannedPayment {
+    /// Get account name from AccountManager
+    func accountName(accountManager: AccountManagerAdapter) -> String {
+        accountManager.getAccount(id: accountId)?.name ?? "Unknown Account"
+    }
+    
+    /// Get destination account name for transfers
+    func toAccountName(accountManager: AccountManagerAdapter) -> String? {
+        guard let toAccountId = toAccountId else { return nil }
+        return accountManager.getAccount(id: toAccountId)?.name
+    }
 }
 

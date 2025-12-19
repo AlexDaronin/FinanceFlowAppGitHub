@@ -155,6 +155,9 @@
 "Data & Backup" = "Data & Backup";
 "Export local backup" = "Export local backup";
 "Restore from backup" = "Restore from backup";
+"Reset all data" = "Reset all data";
+"This will permanently delete all transactions, accounts, subscriptions, credits, and debts. This action cannot be undone." = "This will permanently delete all transactions, accounts, subscriptions, credits, and debts. This action cannot be undone.";
+"Are you sure you want to reset all data? This will permanently delete all your transactions, accounts, subscriptions, credits, and debts. This action cannot be undone." = "Are you sure you want to reset all data? This will permanently delete all your transactions, accounts, subscriptions, credits, and debts. This action cannot be undone.";
 "Premium" = "Premium";
 "Cancel subscription" = "Cancel subscription";
 "Start premium trial" = "Start premium trial";
@@ -191,3 +194,128 @@
 "Add" = "Add";
 "Month" = "Month";
 "Year" = "Year";
+"Day" = "Day";
+"Week" = "Week";
+"day" = "day";
+"week" = "week";
+"month" = "month";
+"year" = "year";
+"Monday" = "Monday";
+"Tuesday" = "Tuesday";
+"Wednesday" = "Wednesday";
+"Thursday" = "Thursday";
+"Friday" = "Friday";
+"Saturday" = "Saturday";
+"Sunday" = "Sunday";
+"Next payment date" = "Next payment date";
+"Delete Only This" = "Delete Only This";
+"Delete All" = "Delete All";
+"Do you want to delete only this occurrence or all future occurrences of this subscription?" = "Do you want to delete only this occurrence or all future occurrences of this subscription?";
+"Are you sure you want to delete this subscription? This action cannot be undone." = "Are you sure you want to delete this subscription? This action cannot be undone.";
+"Repeat operation" = "Repeat operation";
+"Repetition frequency" = "Repetition frequency";
+"Repeat every" = "Repeat every";
+"No categories available" = "No categories available";
+"Monthly expense" = "Monthly expense";
+"Monthly income" = "Monthly income";
+"Monthly transfers" = "Monthly transfers";
+"Next Month" = "Next Month";
+"Manage categories" = "Manage categories";
+"Last 3 Months" = "Last 3 Months";
+"Last 6 Months" = "Last 6 Months";
+"Last 12 Months" = "Last 12 Months";
+"All Time" = "All Time";
+"Time Range" = "Time Range";
+
+/* Credits & Loans */
+"Total Loan Amount" = "Total Loan Amount";
+"Loan Name" = "Loan Name";
+"e.g., Car Loan" = "e.g., Car Loan";
+"Monthly Payment" = "Monthly Payment";
+"Track in Planned Payments" = "Track in Planned Payments";
+"Start Date" = "Start Date";
+"Payment: %@" = "Payment: %@";
+"Edit Credit" = "Edit Credit";
+"Add Credit" = "Add Credit";
+"Delete Credit" = "Delete Credit";
+"Are you sure you want to delete \"%@\"? This action cannot be undone." = "Are you sure you want to delete \"%@\"? This action cannot be undone.";
+"Loan" = "Loan";
+"Make Payment" = "Make Payment";
+"Pay" = "Pay";
+"Pay Now %@" = "Pay Now %@";
+"Delete Loan" = "Delete Loan";
+"From: %@" = "From: %@";
+"%d%% Paid" = "%d%% Paid";
+"Total Amount" = "Total Amount";
+"Monthly Payment" = "Monthly Payment";
+"Upcoming Payments" = "Upcoming Payments";
+"+ %d more" = "+ %d more";
+
+/* Debts */
+"Track money between people" = "Track money between people";
+"To Receive" = "To Receive";
+"To Pay" = "To Pay";
+"No debts" = "No debts";
+"Date" = "Date";
+"Add a note (optional)" = "Add a note (optional)";
+"Delete Transaction" = "Delete Transaction";
+"Are you sure you want to delete this transaction? This action cannot be undone." = "Are you sure you want to delete this transaction? This action cannot be undone.";
+"Select or create contact" = "Select or create contact";
+"Create New Contact" = "Create New Contact";
+"Contact Name" = "Contact Name";
+"Net Balance" = "Net Balance";
+"Transaction History" = "Transaction History";
+"No transactions yet" = "No transactions yet";
+"Delete Contact" = "Delete Contact";
+"Are you sure you want to delete this contact? All associated transaction history will be permanently deleted." = "Are you sure you want to delete this contact? All associated transaction history will be permanently deleted.";
+"Are you sure you want to delete this %@ transaction of %@?" = "Are you sure you want to delete this %@ transaction of %@?";
+"Settled" = "Settled";
+
+/* Recurring */
+"Recurring Income" = "Recurring Income";
+"Recurring Expense" = "Recurring Expense";
+"Recurring Transfer" = "Recurring Transfer";
+"Recurring Debt" = "Recurring Debt";
+"subcategory" = "subcategory";
+"subcategories" = "subcategories";
+
+/* Charts & Statistics */
+"Current month" = "Current month";
+"Net Balance" = "Net Balance";
+"Spending Projection" = "Spending Projection";
+"No spending data available" = "No spending data available";
+
+/* Accounts */
+"No accounts" = "No accounts";
+"Select Account Icon" = "Select Account Icon";
+"Current Balance" = "Current Balance";
+"Delete Account" = "Delete Account";
+"Are you sure you want to delete this account? All associated transactions will also be deleted. This action cannot be undone." = "Are you sure you want to delete this account? All associated transactions will also be deleted. This action cannot be undone.";
+"No transactions yet" = "No transactions yet";
+
+/* Debts - Additional */
+"They Owe Me" = "They Owe Me";
+"I Owe Them" = "I Owe Them";
+"They owe you" = "They owe you";
+"You owe them" = "You owe them";
+"I lent" = "I lent";
+"I borrowed" = "I borrowed";
+"Lent to %@" = "Lent to %@";
+"Borrowed from %@" = "Borrowed from %@";
+"I lent / I returned debt" = "I lent / I returned debt";
+"They lent / They returned debt" = "They lent / They returned debt";
+"Return debt" = "Return debt";
+"Owed to me" = "Owed to me";
+"I owe" = "I owe";
+"Returned" = "Returned";
+"I returned debt" = "I returned debt";
+"They returned debt" = "They returned debt";
+"Edit Debt" = "Edit Debt";
+"Edit Contact" = "Edit Contact";
+"Contact Details" = "Contact Details";
+"Avatar Color" = "Avatar Color";
+"Enter name" = "Enter name";
+"Поступления" = "Income";
+"Расходы" = "Expenses";
+"Баланс на" = "Balance on";
+"Баланс" = "Balance";
